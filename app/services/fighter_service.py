@@ -1,109 +1,63 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.models import Fighter
-from app.utils.ufcstats_scraper import get_ufcstats_profile
-from app.utils.sherdog_scraper import get_sherdog_profile
-from app.utils.fighter_merge import merge_fighter_data
+from app.utils.gpt_safe import gpt_safe_call
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
-
-# DB Helper
-
+# Helper: Get or create fighter by name
 # ---------------------------------------------------------
 
-def _get_or_create(db: Session, name: str) -> Fighter:
-fighter = db.query(Fighter).filter(Fighter.name.ilike(name)).first()
-if fighter:
-return fighter
+def _get_or_create_fighter(db: Session, name: str) -> Fighter:
+    fighter = (
+        db.query(Fighter)
+        .filter(Fighter.name.ilike(name))
+        .first()
+    )
 
-```
-fighter = Fighter(name=name)
-db.add(fighter)
-db.commit()
-db.refresh(fighter)
-return fighter
-```
+    if fighter:
+        return fighter
+
+    fighter = Fighter(name=name)
+    db.add(fighter)
+    db.commit()
+    db.refresh(fighter)
+    return fighter
 
 # ---------------------------------------------------------
-
-# Main: Fetch & Cache Fighter Data
-
+# Public: Load fighter data via GPT
 # ---------------------------------------------------------
 
-def load_fighter_data(
-db: Session,
-name: str,
-tapology_map: Optional[Dict[str, Dict[str, Any]]] = None
-) -> Dict[str, Any]:
-"""
-Loads fighter data with aggressive caching:
-- If DB already has a data source, skip scraper for that source.
-- Else call scraper/GPT and update DB.
-- tapology_map comes from tapology_batch for multiple fighters at once.
-"""
+def load_fighter_data(db: Session, name: str) -> Dict[str, Any]:
+    """
+    Ask GPT for structured fighter metadata.
+    """
 
-```
-fighter = _get_or_create(db, name)
+    prompt = (
+        f"Give me structured fighter metadata for '{name}' "
+        "in JSON format:\n"
+        "{"
+        "  'age': int or null,"
+        "  'height': str or null,"
+        "  'reach': str or null,"
+        "  'style': str or null,"
+        "  'record': str or null"
+        "}"
+    )
 
-# -------------------------
-# UFCStats
-# -------------------------
-if fighter.ufcstats_json:
-    ufcstats_data = fighter.ufcstats_json
-else:
-    ufcstats_data = get_ufcstats_profile(name)
-    if ufcstats_data:
-        fighter.ufcstats_json = ufcstats_data
-        # attempt to store ID if available
-        if "ufcstats_url" in ufcstats_data:
-            fighter.ufcstats_id = ufcstats_data["ufcstats_url"].split("/")[-1]
-        db.commit()
+    raw = gpt_safe_call([prompt])
 
-# -------------------------
-# Sherdog
-# -------------------------
-if fighter.sherdog_json:
-    sherdog_data = fighter.sherdog_json
-else:
-    sherdog_data = get_sherdog_profile(name)
-    if sherdog_data:
-        fighter.sherdog_json = sherdog_data
-        if "sherdog_url" in sherdog_data:
-            fighter.sherdog_url = sherdog_data["sherdog_url"]
-        db.commit()
+    try:
+        data = eval(raw)  # Expect GPT to return a JSON-like dict
+    except Exception:
+        logger.error("GPT returned invalid fighter JSON.")
+        data = {}
 
-# -------------------------
-# Tapology (from batch results)
-# -------------------------
-if fighter.tapology_json:
-    tapology_data = fighter.tapology_json
-else:
-    if tapology_map and name in tapology_map:
-        tapology_data = tapology_map[name]
-        fighter.tapology_json = tapology_data
-        db.commit()
-    else:
-        tapology_data = None
+    fighter = _get_or_create_fighter(db, name)
+    fighter.metadata_json = data
+    db.commit()
 
-# -------------------------
-# Metadata (optional expansion later)
-# -------------------------
-meta = fighter.metadata_json or {}
-
-# -------------------------
-# Merge everything
-# -------------------------
-merged = merge_fighter_data(
-    name=name,
-    metadata=meta,
-    ufcstats=ufcstats_data,
-    sherdog=sherdog_data,
-    tapology=tapology_data
-)
-
-return merged
-```
+    return data
