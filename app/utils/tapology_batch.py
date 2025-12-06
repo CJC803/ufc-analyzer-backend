@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 
 from app.utils.gpt_safe import gpt_safe_call
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 TAPOLOGY_PROMPT_TEMPLATE = """
 You are an assistant extracting Tapology-style fighter profiles.
