@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 from app.schemas import MatchupOdds
 from app.utils.gpt_safe import gpt_safe_call
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 BFO_BASE = "[https://www.bestfightodds.com](https://www.bestfightodds.com)"
 
