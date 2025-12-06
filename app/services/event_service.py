@@ -89,40 +89,41 @@ def update_event(
 # ------------------------------------------------------
 def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
     """
-    Returns:
-    {
-      "event_name": "...",
-      "event_date": "...",
-      "location": "...",
-      "fight_card": [
-        {"fighter_a": "...", "fighter_b": "..."}
-      ]
-    }
+    Returns strict JSON for next UFC event.
     """
 
     prompt = """
-    Give me the next upcoming UFC event in pure JSON:
+You MUST return ONLY valid JSON. No commentary. No markdown. No labels.
 
-    {
-      "event_name": "",
-      "event_date": "",
-      "location": "",
-      "fight_card": [
-        {"fighter_a": "", "fighter_b": ""}
-      ]
-    }
+Return EXACTLY this structure for the NEXT upcoming UFC event:
 
-    Only return JSON. No commentary.
-    """
+{
+  "event_name": "",
+  "event_date": "",
+  "location": "",
+  "fight_card": [
+    {"fighter_a": "", "fighter_b": ""}
+  ]
+}
+
+Rules:
+- Do NOT include backticks.
+- Do NOT include comments.
+- Use the EXACT keys above.
+- Return only JSON.
+"""
 
     raw = gpt_safe_call([{"role": "user", "content": prompt}])
+
+    print("RAW GPT NEXT EVENT RESPONSE:", raw)
 
     import json
     try:
         return json.loads(raw)
-    except Exception:
-        logger.error("Failed to parse GPT next-event JSON.")
+    except Exception as e:
+        print("JSON PARSE ERROR:", e)
         return None
+
 
 
 # ------------------------------------------------------
