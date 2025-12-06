@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from openai import OpenAI
 from app.config import settings
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
