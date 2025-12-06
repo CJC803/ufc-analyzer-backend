@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any, Optional
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
 
