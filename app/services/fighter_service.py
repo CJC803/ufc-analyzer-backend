@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Fighter
 from app.utils.ufcstats_scraper import get_ufcstats_profile
-from app.utils.sherdog_scraper import fetch_sherdog_profile
+from app.utils.sherdog_scraper import get_sherdog_profile
 from app.utils.tapology_scraper import fetch_tapology_fighter
 
 logger = logging.getLogger(__name__)
