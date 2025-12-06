@@ -1,157 +1,69 @@
 import logging
-from typing import Optional, Dict, Any
+from typing import Dict, Any, List
 
-from sqlalchemy.orm import Session
-
-from app.models import Fighter
-from app.utils.ufcstats_scraper import get_ufcstats_profile
-from app.utils.sherdog_scraper import fetch_sherdog_fighter
-from app.utils.tapology_scraper import fetch_tapology_fighter
+from app.services.fighter_service import load_fighter_data
+from app.services.odds_service import get_odds_for_matchups
 
 logger = logging.getLogger(__name__)
 
 
-# -------------------------------------------------------
-# Helper: Get fighter by name (case-insensitive match)
-# -------------------------------------------------------
-def get_fighter_by_name(db: Session, name: str) -> Optional[Fighter]:
-    if not name:
-        return None
-    return (
-        db.query(Fighter)
-        .filter(Fighter.name.ilike(name.strip()))
-        .first()
-    )
-
-
-# -------------------------------------------------------
-# Helper: Create fighter record
-# -------------------------------------------------------
-def create_fighter(
-    db: Session,
-    name: str,
-    metadata_json: Dict[str, Any] = None,
-    ufcstats_id: str = None,
-    sherdog_url: str = None,
-    tapology_slug: str = None
-) -> Fighter:
-
-    fighter = Fighter(
-        name=name.strip(),
-        metadata_json=metadata_json or {},
-        ufcstats_id=ufcstats_data.get("ufcstats_url"),
-        sherdog_url=sherdog_url,
-        tapology_slug=tapology_slug,
-    )
-
-    db.add(fighter)
-    db.commit()
-    db.refresh(fighter)
-
-    logger.info(f"Created new fighter record: {name}")
-    return fighter
-
-
-# -------------------------------------------------------
-# Helper: Update fighter record fields
-# -------------------------------------------------------
-def update_fighter(
-    db: Session,
-    fighter: Fighter,
-    metadata_json: Optional[Dict[str, Any]] = None,
-    ufcstats_json: Optional[Dict[str, Any]] = None,
-    sherdog_json: Optional[Dict[str, Any]] = None,
-    tapology_json: Optional[Dict[str, Any]] = None,
-):
-    updated = False
-
-    if metadata_json is not None:
-        fighter.metadata_json = metadata_json
-        updated = True
-
-    if ufcstats_json is not None:
-        fighter.ufcstats_json = ufcstats_json
-        updated = True
-
-    if sherdog_json is not None:
-        fighter.sherdog_json = sherdog_json
-        updated = True
-
-    if tapology_json is not None:
-        fighter.tapology_json = tapology_json
-        updated = True
-
-    if updated:
-        db.commit()
-        db.refresh(fighter)
-        logger.info(f"Updated fighter record: {fighter.name}")
-
-    return fighter
-
-
-# -------------------------------------------------------
-# MAIN SERVICE: Load fighter data (create or update)
-# -------------------------------------------------------
-def load_fighter_data(db: Session, name: str) -> Fighter:
+# -------------------------------------------------------------
+# Compute stat features from fighter metadata
+# -------------------------------------------------------------
+def compute_stats_features(f1: Dict[str, Any], f2: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Ensures the fighter exists in the DB.
-    Scrapes UFCStats / Sherdog / Tapology if needed.
-    Merges new scraped data into existing DB record.
+    Converts scraped fighter metadata into normalized
+    numbers and comparison features.
     """
 
-    if not name:
-        raise ValueError("Fighter name cannot be empty.")
+    # Safety defaults to prevent crashes
+    f1 = f1 or {}
+    f2 = f2 or {}
 
-    fighter = get_fighter_by_name(db, name)
+    def safe_num(value):
+        try:
+            return float(str(value).replace("%", "").strip())
+        except:
+            return None
 
-    # --------------------------------------------------
-    # STEP 1 — Scrape external sources
-    # These functions must be safe: return None on fail
-    # --------------------------------------------------
-    try:
-        ufcstats_data = get_ufcstats_profile(name)
-    except Exception as e:
-        logger.error(f"UFCStats scrape failed for {name}: {e}")
-        ufcstats_data = None
-
-    try:
-        sherdog_data = fetch_sherdog_fighter(name)
-    except Exception as e:
-        logger.error(f"Sherdog scrape failed for {name}: {e}")
-        sherdog_data = None
-
-    try:
-        tapology_data = fetch_tapology_fighter(name)
-    except Exception as e:
-        logger.error(f"Tapology scrape failed for {name}: {e}")
-        tapology_data = None
-
-    # Combine metadata sources
-    combined_meta = {
-        "ufcstats": ufcstats_data,
-        "sherdog": sherdog_data,
-        "tapology": tapology_data,
+    return {
+        "reach_diff": safe_num(f1.get("reach")) and safe_num(f2.get("reach")) and safe_num(f1.get("reach")) - safe_num(f2.get("reach")),
+        "height_diff": safe_num(f1.get("height")) and safe_num(f2.get("height")) and safe_num(f1.get("height")) - safe_num(f2.get("height")),
+        "age_diff": safe_num(f1.get("age")) and safe_num(f2.get("age")) and safe_num(f1.get("age")) - safe_num(f2.get("age")),
+        "ko_rate_diff": safe_num(f1.get("ko_rate")) and safe_num(f2.get("ko_rate")) and safe_num(f1.get("ko_rate")) - safe_num(f2.get("ko_rate")),
     }
+    
 
-    # --------------------------------------------------
-    # STEP 2 — Create or update fighter
-    # --------------------------------------------------
-    if fighter is None:
-        return create_fighter(
-            db=db,
-            name=name,
-            metadata_json=combined_meta,
-            ufcstats_id=ufcstats_data.get("id") if ufcstats_data else None,
-            sherdog_url=sherdog_data.get("url") if sherdog_data else None,
-            tapology_slug=tapology_data.get("slug") if tapology_data else None,
-        )
+# -------------------------------------------------------------
+# Build GPT prompt for analysis
+# -------------------------------------------------------------
+def build_analysis_prompt(matchups: List[Dict[str, str]], odds: Dict[str, Any]) -> str:
+    """
+    Constructs the message sent to GPT to generate predictions.
+    Includes fighter metadata, stats, odds, and computed features.
+    """
 
-    # UPDATE existing fields
-    return update_fighter(
-        db=db,
-        fighter=fighter,
-        metadata_json=combined_meta,
-        ufcstats_json=ufcstats_data,
-        sherdog_json=sherdog_data,
-        tapology_json=tapology_data,
-    )
+    blocks = ["You are an MMA fight analyst. Give concise, data-backed predictions.\n"]
+
+    for match in matchups:
+        f1 = match["fighter_a"]
+        f2 = match["fighter_b"]
+
+        blocks.append(f"Matchup: {f1} vs {f2}")
+
+        odds_data = odds.get(f"{f1}__{f2}", {})
+
+        blocks.append("Odds:")
+        blocks.append(str(odds_data))
+
+        blocks.append("Stats:")
+        blocks.append(str(match.get("stats_features", {})))
+
+        blocks.append("\nPrediction should include:")
+        blocks.append("- Who wins and why")
+        blocks.append("- Path to victory")
+        blocks.append("- Risk factors")
+        blocks.append("- Confidence rating (1–10)")
+        blocks.append("- Do NOT hedge. Choose a clear winner.\n")
+
+    return "\n".join(blocks)
