@@ -1,102 +1,190 @@
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import requests
+
 from sqlalchemy.orm import Session
 
 from app.models import Event
-from app.utils.event_lookup import get_next_ufc_event
+from app.services.fighter_service import load_fighter_data
+from app.services.analysis_service import analyze_matchup
+from app.config import settings
 
-logger = logging.getLogger("event_service")
+logger = logging.getLogger(__name__)
+
+UFC_EVENTS_URL = "http://ufcstats.com/statistics/events/upcoming?page=all"
 
 # ---------------------------------------------------------
-# Helper: Get or create event by name
+# 1. Scrape the next upcoming UFC event
 # ---------------------------------------------------------
+def scrape_next_event() -> Optional[Dict[str, Any]]:
+    """
+    Scrapes the UFCStats upcoming events page and returns:
+    - event_name
+    - event_date
+    - location
+    - fight_card (list of matchups)
+    """
 
-def _get_or_create_event(db: Session, event_name: str) -> Event:
-    event = (
-        db.query(Event)
-        .filter(Event.event_name.ilike(event_name))
-        .first()
+    try:
+        html = requests.get(UFC_EVENTS_URL, timeout=10).text
+    except Exception as e:
+        logger.error(f"Failed to fetch upcoming events page: {e}")
+        return None
+
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+
+    table = soup.find("table", class_="b-statistics__table-events")
+    if not table:
+        logger.error("Could not locate events table on UFCStats.")
+        return None
+
+    rows = table.find_all("tr")[1:]  # skip header
+    if not rows:
+        logger.error("No upcoming event rows found.")
+        return None
+
+    first = rows[0].find_all("td")
+    if len(first) < 4:
+        logger.error("Malformed event row.")
+        return None
+
+    # Basic details
+    event_name = first[0].text.strip()
+    event_date = first[1].text.strip()
+    location = first[2].text.strip()
+
+    # Fetch event URL to get fight card
+    url_tag = rows[0].find("a")
+    if not url_tag:
+        logger.error("No event URL found.")
+        return None
+
+    event_url = url_tag["href"]
+
+    fight_card = scrape_fight_card(event_url)
+
+    return {
+        "event_name": event_name,
+        "event_date": event_date,
+        "location": location,
+        "fight_card": fight_card,
+        "event_url": event_url,
+    }
+
+
+# ---------------------------------------------------------
+# 2. Scrape the fight card for an event
+# ---------------------------------------------------------
+def scrape_fight_card(event_url: str) -> List[Dict[str, str]]:
+    """
+    Returns a list of matchups:
+        [{"fighter1": "A", "fighter2": "B", "weight_class": "..."}]
+    """
+
+    try:
+        html = requests.get(event_url, timeout=10).text
+    except Exception as e:
+        logger.error(f"Failed to fetch event page {event_url}: {e}")
+        return []
+
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+
+    rows = soup.find_all("tr", class_="b-fight-details__table-row")
+    matchups = []
+
+    for r in rows:
+        cols = r.find_all("td")
+        if len(cols) < 2:
+            continue
+
+        f1 = cols[1].text.strip()
+        f2 = cols[2].text.strip()
+
+        weight_class = cols[0].text.strip()
+
+        matchups.append({
+            "fighter1": f1,
+            "fighter2": f2,
+            "weight_class": weight_class
+        })
+
+    return matchups
+
+
+# ---------------------------------------------------------
+# 3. Create an event in the database
+# ---------------------------------------------------------
+def create_event(db: Session, event_data: Dict[str, Any]) -> Event:
+    event = Event(
+        event_name=event_data["event_name"],
+        event_date=event_data["event_date"],
+        location=event_data["location"],
+        fight_card_json=event_data["fight_card"],
     )
 
-    if event:
-        return event
-
-    event = Event(event_name=event_name)
     db.add(event)
     db.commit()
     db.refresh(event)
+
+    logger.info(f"Created event: {event.event_name}")
     return event
 
 
 # ---------------------------------------------------------
-# Public: Load next UFC event (scrape + cache)
+# 4. Get or refresh the next event
 # ---------------------------------------------------------
-
-def load_next_event(db: Session) -> Dict[str, Any]:
+def get_next_event(db: Session) -> Event:
     """
-    Runs the event lookup pipeline (UFCStats → fallback GPT)
-    Then caches the event JSON if new or updated.
+    Always returns the next upcoming UFC event.
+    If not stored, scrape + create.
+    """
+    latest = db.query(Event).order_by(Event.id.desc()).first()
+
+    if latest:
+        logger.info(f"Using cached event: {latest.event_name}")
+        return latest
+
+    scraped = scrape_next_event()
+    if not scraped:
+        raise RuntimeError("Could not load next UFC event.")
+
+    return create_event(db, scraped)
+
+
+# ---------------------------------------------------------
+# 5. Analyze every matchup on a fight card
+# ---------------------------------------------------------
+def analyze_event_fights(db: Session, event_id: int) -> List[Dict[str, Any]]:
+    """
+    Loops through every matchup in the event and produces:
+      {
+        "fighter1": "...",
+        "fighter2": "...",
+        "analysis": { full GPT output }
+      }
     """
 
-    logger.info("Loading next UFC event via event_lookup pipeline...")
-
-    event_json = get_next_ufc_event()
-
-    event_name = event_json.get("event_name")
-    if not event_name:
-        raise RuntimeError("Event lookup returned no event_name.")
-
-    event = _get_or_create_event(db, event_name)
-
-    # Update event fields
-    event.event_date = event_json.get("event_date")
-    event.location = event_json.get("location")
-    event.fight_card = event_json.get("fight_card")  # raw JSON
-
-    db.commit()
-
-    return event_json
-
-
-# ---------------------------------------------------------
-# Public: Get latest cached event
-# ---------------------------------------------------------
-
-def get_latest_event(db: Session) -> Optional[Dict[str, Any]]:
-    event = (
-        db.query(Event)
-        .order_by(Event.id.desc())
-        .first()
-    )
-
+    event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
-        return None
+        raise ValueError("Event not found.")
 
-    return {
-        "event_name": event.event_name,
-        "event_date": event.event_date,
-        "location": event.location,
-        "fight_card": event.fight_card,
-    }
+    results = []
 
+    for fight in event.fight_card_json:
+        f1 = fight["fighter1"]
+        f2 = fight["fighter2"]
 
-# ---------------------------------------------------------
-# Public: Get event by name
-# ---------------------------------------------------------
+        logger.info(f"Analyzing matchup: {f1} vs {f2}")
 
-def get_event_by_name(db: Session, name: str) -> Optional[Dict[str, Any]]:
-    event = (
-        db.query(Event)
-        .filter(Event.event_name.ilike(name))
-        .first()
-    )
+        analysis = analyze_matchup(db, f1, f2)
 
-    if not event:
-        return None
+        results.append({
+            "fighter1": f1,
+            "fighter2": f2,
+            "weight_class": fight.get("weight_class"),
+            "analysis": analysis
+        })
 
-    return {
-        "event_name": event.event_name,
-        "event_date": event.event_date,
-        "location": event.location,
-        "fight_card": event.fight_card,
-    }
+    return results
