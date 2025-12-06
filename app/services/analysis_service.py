@@ -1,6 +1,6 @@
 import logging
 import requests
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 from app.services.fighter_service import load_fighter_data
 from app.config import settings
@@ -9,21 +9,21 @@ from app.utils.gpt_safe import gpt_safe_call
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------
-# ODDS API CONFIG  (Option B you selected)
+# ODDS API CONFIG
 # --------------------------------------------
 ODDS_API_KEY = settings.ODDS_API_KEY
 ODDS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/odds"
 
 
 # ========================================================
-# 1. Fetch Betting Odds
+# 1. Fetch betting odds
 # ========================================================
-def fetch_fight_odds(fighter1: str, fighter2: str) -> Optional[Dict[str, Any]]:
-    """
-    Fetches odds for a specific matchup using Option B provider.
-    Returns normalized moneyline odds for both fighters.
-    """
+def normalize_name(name: str) -> str:
+    """Normalize fighter names for matching."""
+    return name.lower().replace("-", " ").replace(".", "").strip()
 
+
+def fetch_fight_odds(f1: str, f2: str) -> Optional[Dict[str, Any]]:
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
@@ -33,24 +33,21 @@ def fetch_fight_odds(fighter1: str, fighter2: str) -> Optional[Dict[str, Any]]:
     try:
         response = requests.get(ODDS_ENDPOINT, params=params, timeout=10)
         response.raise_for_status()
-        data = response.json()
-
+        events = response.json()
     except Exception as e:
-        logger.error(f"Odds API request failed: {e}")
+        logger.error(f"Odds API error: {e}")
         return None
 
-    # Find matching fight
-    fighter1_lower = fighter1.lower()
-    fighter2_lower = fighter2.lower()
+    n1 = normalize_name(f1)
+    n2 = normalize_name(f2)
 
-    for event in data:
+    for event in events:
         for bookmaker in event.get("bookmakers", []):
             for market in bookmaker.get("markets", []):
                 outcomes = market.get("outcomes", [])
+                names = [normalize_name(o["name"]) for o in outcomes]
 
-                names = [o["name"].lower() for o in outcomes]
-
-                if fighter1_lower in names and fighter2_lower in names:
+                if n1 in names and n2 in names:
                     return {
                         "fighter1": outcomes[0],
                         "fighter2": outcomes[1],
@@ -61,70 +58,60 @@ def fetch_fight_odds(fighter1: str, fighter2: str) -> Optional[Dict[str, Any]]:
 
 
 # ========================================================
-# 2. Compute useful stats features
+# 2. Extract stats from UFCStats JSON safely
 # ========================================================
 def compute_stats_features(f1: Dict[str, Any], f2: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Extracts comparable numerical features from UFCStats fighter profiles.
-    Very expandable — safe if data missing.
-    """
 
-    def parse_float(v):
+    def safe_float(v):
         try:
             return float(v)
         except:
             return None
 
-    f1_stats = f1.get("career_stats", {})
-    f2_stats = f2.get("career_stats", {})
+    s1 = f1.get("career_stats", {})
+    s2 = f2.get("career_stats", {})
 
     return {
-        "sig_str_land_per_min": {
-            "fighter1": parse_float(f1_stats.get("SLpM")),
-            "fighter2": parse_float(f2_stats.get("SLpM")),
+        "sig_strikes_landed_per_min": {
+            "fighter1": safe_float(s1.get("SLpM") or s1.get("SLpM:")),
+            "fighter2": safe_float(s2.get("SLpM") or s2.get("SLpM:")),
         },
-        "sig_str_acc": {
-            "fighter1": parse_float(f1_stats.get("Str. Acc.")),
-            "fighter2": parse_float(f2_stats.get("Str. Acc.")),
+        "sig_strike_accuracy": {
+            "fighter1": safe_float(s1.get("Str. Acc.") or s1.get("Str. Acc.:")),
+            "fighter2": safe_float(s2.get("Str. Acc.") or s2.get("Str. Acc.:")),
         },
-        "takedown_avg": {
-            "fighter1": parse_float(f1_stats.get("TD Avg.")),
-            "fighter2": parse_float(f2_stats.get("TD Avg.")),
+        "takedown_average": {
+            "fighter1": safe_float(s1.get("TD Avg.") or s1.get("TD Avg.:")),
+            "fighter2": safe_float(s2.get("TD Avg.") or s2.get("TD Avg.:")),
         },
-        "takedown_def": {
-            "fighter1": parse_float(f1_stats.get("TD Def.")),
-            "fighter2": parse_float(f2_stats.get("TD Def.")),
+        "takedown_defense": {
+            "fighter1": safe_float(s1.get("TD Def.") or s1.get("TD Def.:")),
+            "fighter2": safe_float(s2.get("TD Def.") or s2.get("TD Def.:")),
         },
     }
 
 
 # ========================================================
-# 3. Build Fight Analysis Prompt
+# 3. Build GPT Analysis Prompt
 # ========================================================
-def build_analysis_prompt(
-    fighter1: Dict[str, Any],
-    fighter2: Dict[str, Any],
-    stats: Dict[str, Any],
-    odds: Optional[Dict[str, Any]]
-) -> str:
-
+def build_analysis_prompt(fighter1, fighter2, stats, odds):
     return f"""
-You are an MMA fight analyst.
+You are an expert MMA analyst.
 
-Compare the following two fighters and produce:
+Break down this matchup with:
 
-1. Breakdown of strengths & weaknesses
-2. Style vs style analysis
+1. Strengths vs weaknesses
+2. Style matchup details
 3. Path to victory for each fighter
 4. Predicted winner
-5. Confidence level (0–100%)
-6. Optional parlay suggestion based on the analysis
+5. Confidence score (0–100%)
+6. Optional fun parlay suggestion
 
 -------------------
-Fighter 1:
+Fighter 1 Data:
 {fighter1}
 
-Fighter 2:
+Fighter 2 Data:
 {fighter2}
 
 -------------------
@@ -135,40 +122,38 @@ Stats Comparison:
 Betting Odds:
 {odds}
 
-Give a professional, detailed breakdown.
+Give a professional breakdown.
 """
 
 
 # ========================================================
-# 4. Main function: analyze a matchup
+# 4. MAIN: Analyze a matchup
 # ========================================================
 def analyze_matchup(db, fighter1_name: str, fighter2_name: str) -> Dict[str, Any]:
-    """
-    Loads both fighters → scrapes data → pulls odds → computes stats → GPT analysis.
-    """
 
-    # Load fighter records & scrape if needed
-    f1 = load_fighter_data(db, fighter1_name).metadata_json["ufcstats"]
-    f2 = load_fighter_data(db, fighter2_name).metadata_json["ufcstats"]
+    # Load fighters & metadata
+    f1_full = load_fighter_data(db, fighter1_name).metadata_json
+    f2_full = load_fighter_data(db, fighter2_name).metadata_json
 
-    # Compute stats features
+    f1 = f1_full["ufcstats"]
+    f2 = f2_full["ufcstats"]
+
+    # Stats
     stats = compute_stats_features(f1, f2)
 
-    # Get bookmaker odds
+    # Odds
     odds = fetch_fight_odds(fighter1_name, fighter2_name)
 
     # Build GPT prompt
     prompt = build_analysis_prompt(f1, f2, stats, odds)
 
-    # Run safe GPT
-    result = gpt_safe_call([
-        {"role": "user", "content": prompt}
-    ])
+    # GPT analysis
+    analysis = gpt_safe_call([{"role": "user", "content": prompt}])
 
     return {
         "fighter_1": fighter1_name,
         "fighter_2": fighter2_name,
         "stats": stats,
         "odds": odds,
-        "analysis_text": result,
+        "analysis_text": analysis,
     }
