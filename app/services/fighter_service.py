@@ -1,6 +1,5 @@
 import logging
 from typing import Optional, Dict, Any
-
 from sqlalchemy.orm import Session
 
 from app.models import Fighter
@@ -25,23 +24,32 @@ def get_fighter_by_name(db: Session, name: str) -> Optional[Fighter]:
 
 
 # -------------------------------------------------------
-# Helper: Create fighter record
+# Create fighter record
 # -------------------------------------------------------
 def create_fighter(
     db: Session,
     name: str,
-    metadata_json: Dict[str, Any] = None,
-    ufcstats_url: str = None,
-    sherdog_url: str = None,
-    tapology_slug: str = None
+    metadata_json: Dict[str, Any],
+    ufcstats_data: Optional[Dict[str, Any]],
+    sherdog_data: Optional[Dict[str, Any]],
+    tapology_data: Optional[Dict[str, Any]],
 ) -> Fighter:
 
     fighter = Fighter(
         name=name.strip(),
+
+        # Full metadata blob
         metadata_json=metadata_json or {},
-        ufcstats_id=ufcstats_url,
-        sherdog_url=sherdog_url,
-        tapology_slug=tapology_slug,
+
+        # IDs / URLs
+        ufcstats_id=ufcstats_data.get("ufcstats_url") if ufcstats_data else None,
+        sherdog_url=sherdog_data.get("sherdog_url") if sherdog_data else None,
+        tapology_slug=tapology_data.get("tapology_slug") if tapology_data else None,
+
+        # Stored JSON fields
+        ufcstats_json=ufcstats_data,
+        sherdog_json=sherdog_data,
+        tapology_json=tapology_data,
     )
 
     db.add(fighter)
@@ -53,108 +61,92 @@ def create_fighter(
 
 
 # -------------------------------------------------------
-# Helper: Update fighter record fields
+# Update fighter record
 # -------------------------------------------------------
 def update_fighter(
     db: Session,
     fighter: Fighter,
-    metadata_json: Optional[Dict[str, Any]] = None,
-    ufcstats_json: Optional[Dict[str, Any]] = None,
-    sherdog_json: Optional[Dict[str, Any]] = None,
-    tapology_json: Optional[Dict[str, Any]] = None,
-):
-    updated = False
+    metadata_json: Dict[str, Any],
+    ufcstats_data: Optional[Dict[str, Any]],
+    sherdog_data: Optional[Dict[str, Any]],
+    tapology_data: Optional[Dict[str, Any]],
+) -> Fighter:
 
-    if metadata_json is not None:
-        fighter.metadata_json = metadata_json
-        updated = True
+    fighter.metadata_json = metadata_json
 
-    if ufcstats_json is not None:
-        fighter.ufcstats_json = ufcstats_json
-        updated = True
+    if ufcstats_data:
+        fighter.ufcstats_json = ufcstats_data
+        fighter.ufcstats_id = ufcstats_data.get("ufcstats_url")
 
-    if sherdog_json is not None:
-        fighter.sherdog_json = sherdog_json
-        updated = True
+    if sherdog_data:
+        fighter.sherdog_json = sherdog_data
+        fighter.sherdog_url = sherdog_data.get("sherdog_url")
 
-    if tapology_json is not None:
-        fighter.tapology_json = tapology_json
-        updated = True
+    if tapology_data:
+        fighter.tapology_json = tapology_data
+        fighter.tapology_slug = tapology_data.get("tapology_slug")
 
-    if updated:
-        db.commit()
-        db.refresh(fighter)
-        logger.info(f"Updated fighter record: {fighter.name}")
+    db.commit()
+    db.refresh(fighter)
 
+    logger.info(f"Updated fighter record: {fighter.name}")
     return fighter
 
 
 # -------------------------------------------------------
-# MAIN SERVICE: Load fighter data (create or update)
+# MAIN SERVICE
 # -------------------------------------------------------
 def load_fighter_data(db: Session, name: str) -> Fighter:
     """
-    Ensures the fighter exists in the DB.
-    Scrapes UFCStats / Sherdog / Tapology.
-    Merges scraped data into DB record.
+    Creates or updates a fighter entry with:
+    - UFCStats
+    - Sherdog
+    - Tapology
     """
-
-    if not name:
-        raise ValueError("Fighter name cannot be empty.")
 
     fighter = get_fighter_by_name(db, name)
 
-    # --------------------------------------------------
-    # STEP 1 — Scrape external sources safely
-    # --------------------------------------------------
+    # Scrapers (all safe)
     try:
         ufcstats_data = get_ufcstats_profile(name)
     except Exception as e:
-        logger.error(f"UFCStats scrape failed for {name}: {e}")
+        logger.error(f"UFCStats failed for {name}: {e}")
         ufcstats_data = None
 
     try:
         sherdog_data = get_sherdog_profile(name)
     except Exception as e:
-        logger.error(f"Sherdog scrape failed for {name}: {e}")
+        logger.error(f"Sherdog failed for {name}: {e}")
         sherdog_data = None
 
     try:
         tapology_data = get_tapology_profile(name)
     except Exception as e:
-        logger.error(f"Tapology scrape failed for {name}: {e}")
+        logger.error(f"Tapology failed for {name}: {e}")
         tapology_data = None
 
-    # --------------------------------------------------
-    # Combined metadata blob for convenience
-    # --------------------------------------------------
+    # Combined metadata
     combined_meta = {
         "ufcstats": ufcstats_data,
         "sherdog": sherdog_data,
         "tapology": tapology_data,
     }
 
-    # --------------------------------------------------
-    # STEP 2 — Create new fighter
-    # --------------------------------------------------
     if fighter is None:
         return create_fighter(
             db=db,
             name=name,
             metadata_json=combined_meta,
-            ufcstats_url=ufcstats_data.get("ufcstats_url") if ufcstats_data else None,
-            sherdog_url=sherdog_data.get("sherdog_url") if sherdog_data else None,
-            tapology_slug=tapology_data.get("tapology_slug") if tapology_data else None,
+            ufcstats_data=ufcstats_data,
+            sherdog_data=sherdog_data,
+            tapology_data=tapology_data,
         )
 
-    # --------------------------------------------------
-    # STEP 3 — Update existing fighter
-    # --------------------------------------------------
     return update_fighter(
         db=db,
         fighter=fighter,
         metadata_json=combined_meta,
-        ufcstats_json=ufcstats_data,
-        sherdog_json=sherdog_data,
-        tapology_json=tapology_data,
+        ufcstats_data=ufcstats_data,
+        sherdog_data=sherdog_data,
+        tapology_data=tapology_data,
     )
