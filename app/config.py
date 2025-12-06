@@ -1,8 +1,15 @@
-from pydantic import BaseSettings
+# app/config.py
+
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    OPENAI_API_KEY: str
     DATABASE_URL: str
+    ODDS_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
 
-settings = Settings()  # No .env loading at all
+    class Config:
+        env_file = ".env"
+        extra = "allow"
+
+settings = Settings()
 
