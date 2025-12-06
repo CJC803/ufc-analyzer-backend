@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 
 from app.utils.gpt_safe import gpt_safe_call
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 SHERDOG_SEARCH = "[https://www.sherdog.com/stats/fightfinder?SearchTxt={query}](https://www.sherdog.com/stats/fightfinder?SearchTxt={query})"
 
