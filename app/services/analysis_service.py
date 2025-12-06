@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.models import Fighter
-from app.utils.ufcstats_scraper import fetch_ufcstats_fighter
+from app.utils.ufcstats_scraper import get_ufcstats_profile
 from app.utils.sherdog_scraper import fetch_sherdog_fighter
 from app.utils.tapology_scraper import fetch_tapology_fighter
 
@@ -39,7 +39,7 @@ def create_fighter(
     fighter = Fighter(
         name=name.strip(),
         metadata_json=metadata_json or {},
-        ufcstats_id=ufcstats_id,
+        ufcstats_id=ufcstats_data.get("ufcstats_url"),
         sherdog_url=sherdog_url,
         tapology_slug=tapology_slug,
     )
@@ -109,7 +109,7 @@ def load_fighter_data(db: Session, name: str) -> Fighter:
     # These functions must be safe: return None on fail
     # --------------------------------------------------
     try:
-        ufcstats_data = fetch_ufcstats_fighter(name)
+        ufcstats_data = get_ufcstats_profile(name)
     except Exception as e:
         logger.error(f"UFCStats scrape failed for {name}: {e}")
         ufcstats_data = None
