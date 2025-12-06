@@ -1,47 +1,36 @@
-from typing import List, Dict, Any, Generator
+import logging
+from typing import List, Dict, Any
 from openai import OpenAI
-from app.config import settings
 
-# Create a global OpenAI client
+logger = logging.getLogger(__name__)
 
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+client = OpenAI()
 
-def run(
-messages: List[Dict[str, Any]],
-model: str = "gpt-4o-mini",
-temperature: float = 0.2
-) -> str:
-"""
-Standard non-streaming GPT call.
-Used for all backend tasks except final analysis.
-"""
-response = client.chat.completions.create(
-model=model,
-messages=messages,
-temperature=temperature
-)
-return response.choices[0].message.content
+def run(messages: List[Dict[str, str]]) -> str:
+    """
+    Minimal safe wrapper around OpenAI's chat completion API.
+    This is a placeholder so the backend can boot without failing.
+    Replace with your preferred model + streaming logic later.
+    """
+    logger.warning("Using placeholder OpenAI run() function.")
 
-def run_stream(
-messages: List[Dict[str, Any]],
-model: str = "gpt-4o-mini",
-temperature: float = 0.2
-) -> Generator[str, None, None]:
-"""
-Streaming GPT call.
-Yields tokens as they arrive.
-Used ONLY for /analysis endpoint.
-"""
-stream = client.chat.completions.create(
-model=model,
-messages=messages,
-temperature=temperature,
-stream=True
-)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        max_tokens=1000,
+    )
 
-```
-for chunk in stream:
-    delta = chunk.choices[0].delta
-    if delta and delta.content:
-        yield delta.content
-```
+    return response.choices[0].message.get("content", "")
+
+
+def run_stream(messages: List[Dict[str, str]]):
+    """
+    Placeholder streaming generator.
+    Returns a fake generator so FastAPI dependencies don't explode.
+    Replace with real streaming later.
+    """
+    logger.warning("Using placeholder OpenAI run_stream() function (no real streaming).")
+    
+    fake_text = "Streaming is not yet implemented."
+    for chunk in fake_text.split():
+        yield chunk
