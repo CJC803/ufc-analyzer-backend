@@ -3,60 +3,73 @@ from typing import Optional, Dict, Any, List
 
 from sqlalchemy.orm import Session
 from app.models import Event
-from app.services.analysis_service import analyze_matchup
 from app.utils.gpt_safe import gpt_safe_call
 
 logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------
-# Get event by name
+# Helper: Get event by name (uses correct column!)
 # ------------------------------------------------------
 def get_event_by_name(db: Session, name: str) -> Optional[Event]:
     return (
         db.query(Event)
-        .filter(Event.name.ilike(name.strip()))
+        .filter(Event.event_name.ilike(name.strip()))
         .first()
     )
 
 
 # ------------------------------------------------------
-# Create event record
+# Create event (matches your Event model schema)
 # ------------------------------------------------------
 def create_event(
     db: Session,
-    name: str,
-    fights: List[Dict[str, Any]],
-    raw_metadata: Dict[str, Any] = None
+    event_name: str,
+    event_date: Optional[str],
+    location: Optional[str],
+    fight_card: List[Dict[str, Any]],
+    raw_metadata: Dict[str, Any]
 ) -> Event:
 
     event = Event(
-        name=name,
-        fights=fights,
-        metadata_json=raw_metadata or {},
+        event_name=event_name,
+        event_date=event_date,
+        location=location,
+        fight_card_json=fight_card,
+        metadata_json=raw_metadata,
     )
 
     db.add(event)
     db.commit()
     db.refresh(event)
-    logger.info(f"Created event: {name}")
 
+    logger.info(f"Created event: {event_name}")
     return event
 
 
 # ------------------------------------------------------
-# Update event
+# Update event (matches Event model’s fields)
 # ------------------------------------------------------
 def update_event(
     db: Session,
     event: Event,
-    fights: Optional[List[Dict[str, Any]]] = None,
-    raw_metadata: Optional[Dict[str, Any]] = None
+    event_date: Optional[str],
+    location: Optional[str],
+    fight_card: Optional[List[Dict[str, Any]]],
+    raw_metadata: Optional[Dict[str, Any]]
 ):
     updated = False
 
-    if fights is not None:
-        event.fights = fights
+    if event_date is not None:
+        event.event_date = event_date
+        updated = True
+
+    if location is not None:
+        event.location = location
+        updated = True
+
+    if fight_card is not None:
+        event.fight_card_json = fight_card
         updated = True
 
     if raw_metadata is not None:
@@ -66,59 +79,97 @@ def update_event(
     if updated:
         db.commit()
         db.refresh(event)
-        logger.info(f"Updated event: {event.name}")
+        logger.info(f"Updated event: {event.event_name}")
 
     return event
 
 
 # ------------------------------------------------------
-# GPT — fetch next UFC event + card
+# GPT — fetch next UFC event with correct schema
 # ------------------------------------------------------
 def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
-    prompt = """
-    Give me the next upcoming UFC event.
-    Return structured JSON with:
-
+    """
+    Returns:
     {
       "event_name": "...",
-      "date": "...",
-      "card": [
-        {"fighter1": "...", "fighter2": "..."}
+      "event_date": "...",
+      "location": "...",
+      "fight_card": [
+        {"fighter_a": "...", "fighter_b": "..."}
+      ]
+    }
+    """
+
+    prompt = """
+    Give me the next upcoming UFC event in pure JSON:
+
+    {
+      "event_name": "",
+      "event_date": "",
+      "location": "",
+      "fight_card": [
+        {"fighter_a": "", "fighter_b": ""}
       ]
     }
 
-    Only JSON. No commentary.
+    Only return JSON. No commentary.
     """
 
     raw = gpt_safe_call([{"role": "user", "content": prompt}])
 
+    import json
     try:
-        import json
         return json.loads(raw)
     except Exception:
-        logger.error("Could not parse GPT event response.")
+        logger.error("Failed to parse GPT next-event JSON.")
         return None
 
 
 # ------------------------------------------------------
-# MAIN: Load the next event
+# MAIN: load_next_event (never returns null)
 # ------------------------------------------------------
-def load_next_event(db: Session) -> Optional[Event]:
+def load_next_event(db: Session) -> Dict[str, Any]:
     """
-    Queries GPT for the next event & matchups.
-    Saves or updates an Event entry.
+    Loads the next UFC event from GPT (safe fallback).
+    Saves into DB with correct model fields.
     """
 
     event_data = _gpt_fetch_next_event()
+
     if not event_data:
-        return None
+        # ALWAYS return structure
+        return {
+            "event_name": None,
+            "event_date": None,
+            "location": None,
+            "fight_card": []
+        }
 
     name = event_data["event_name"]
-    card = event_data["card"]
+    date = event_data.get("event_date")
+    location = event_data.get("location")
+    card = event_data["fight_card"]
 
     existing = get_event_by_name(db, name)
 
     if existing:
-        return update_event(db, existing, fights=card, raw_metadata=event_data)
+        update_event(
+            db,
+            event=existing,
+            event_date=date,
+            location=location,
+            fight_card=card,
+            raw_metadata=event_data
+        )
+        return event_data
 
-    return create_event(db, name=name, fights=card, raw_metadata=event_data)
+    create_event(
+        db,
+        event_name=name,
+        event_date=date,
+        location=location,
+        fight_card=card,
+        raw_metadata=event_data
+    )
+
+    return event_data
