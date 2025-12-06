@@ -1,65 +1,81 @@
 import logging
-import requests
-from bs4 import BeautifulSoup
 from typing import Optional, Dict, Any
+
+from app.utils.gpt_safe import gpt_safe_call
 
 logger = logging.getLogger(__name__)
 
-TAPOLOGY_SEARCH = "https://www.tapology.com/search?term="
+# ---------------------------------------------------------
+# GPT Fallback: resolve Tapology fighter slug
+# ---------------------------------------------------------
 
-
-def fetch_tapology_fighter(name: str) -> Optional[Dict[str, Any]]:
+def _gpt_find_tapology_slug(name: str) -> Optional[str]:
     """
-    Searches Tapology for a fighter and scrapes basic profile data.
-    Returns None if no profile found or scrape fails.
+    GPT resolves only the Tapology fighter URL slug.
+    Example:
+      Input: "Jon Jones"
+      Output: "jon-jones"   (not the full URL)
     """
 
-    try:
-        url = TAPOLOGY_SEARCH + requests.utils.quote(name)
-        logger.info(f"[Tapology] Searching: {url}")
+    prompt = (
+        f"Give ONLY the Tapology.com fighter slug for the fighter '{name}'. "
+        f"Example: For 'Jon Jones' return: jon-jones "
+        f"If unknown return ONLY 'null'. No extra text."
+    )
 
-        html = requests.get(url, timeout=10).text
-        soup = BeautifulSoup(html, "html.parser")
+    raw = gpt_safe_call([{"role": "user", "content": prompt}])
 
-        # -----------------------------
-        # Locate fighter search results
-        # -----------------------------
-        fighter_link = soup.select_one(".fighterResult .name a")
-        if not fighter_link:
-            logger.warning(f"[Tapology] No fighter found for: {name}")
-            return None
-
-        profile_url = "https://www.tapology.com" + fighter_link.get("href")
-
-        # -----------------------------
-        # Scrape fighter profile
-        # -----------------------------
-        logger.info(f"[Tapology] Scraping profile: {profile_url}")
-        profile_html = requests.get(profile_url, timeout=10).text
-        psoup = BeautifulSoup(profile_html, "html.parser")
-
-        # Fighter name
-        title = psoup.select_one(".fighterPage h1")
-        fighter_name = title.text.strip() if title else name
-
-        # Record / details
-        record_elem = psoup.select_one(".fighterRecord span.record")
-        record = record_elem.text.strip() if record_elem else None
-
-        height_elem = psoup.find("li", string=lambda s: s and "Height" in s)
-        reach_elem = psoup.find("li", string=lambda s: s and "Reach" in s)
-
-        height = height_elem.text.replace("Height:", "").strip() if height_elem else None
-        reach = reach_elem.text.replace("Reach:", "").strip() if reach_elem else None
-
-        return {
-            "name": fighter_name,
-            "profile_url": profile_url,
-            "record": record,
-            "height": height,
-            "reach": reach,
-        }
-
-    except Exception as e:
-        logger.error(f"[Tapology] Scraper failed for {name}: {e}")
+    if not raw:
         return None
+
+    raw = raw.strip().lower()
+
+    if raw == "null":
+        return None
+
+    # slug should not contain a URL, just the slug string
+    if "/" in raw:
+        raw = raw.split("/")[-1]
+
+    return raw
+
+
+# ---------------------------------------------------------
+# Placeholder Tapology scraper
+# Real scraping requires JS rendering / Cloudflare bypass
+# ---------------------------------------------------------
+
+def _scrape_tapology_profile(slug: str) -> Optional[Dict[str, Any]]:
+    """
+    Returns a placeholder Tapology profile object.
+    This prevents backend crashes until we add full Tapology scraping.
+    """
+
+    logger.info(f"Tapology placeholder used for slug: {slug}")
+
+    return {
+        "tapology_slug": slug,
+        "tapology_url": f"https://www.tapology.com/fightcenter/fighters/{slug}",
+        "note": "Tapology scraping not implemented yet. Slug resolved successfully.",
+    }
+
+
+# ---------------------------------------------------------
+# Public API: get Tapology fighter data
+# ---------------------------------------------------------
+
+def get_tapology_profile(name: str) -> Optional[Dict[str, Any]]:
+    """
+    1. Resolve slug via GPT
+    2. Return placeholder scraped data
+    """
+
+    logger.info(f"Resolving Tapology profile for: {name}")
+
+    slug = _gpt_find_tapology_slug(name)
+
+    if not slug:
+        logger.warning(f"No Tapology slug found for fighter: {name}")
+        return None
+
+    return _scrape_tapology_profile(slug)
