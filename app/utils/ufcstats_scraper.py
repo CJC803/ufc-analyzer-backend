@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 
 from app.utils.gpt_safe import gpt_safe_call
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 UFC_SEARCH = "[http://ufcstats.com/statistics/fighters?query={query}&page=all](http://ufcstats.com/statistics/fighters?query={query}&page=all)"
 UFC_BASE = "[http://ufcstats.com](http://ufcstats.com)"
