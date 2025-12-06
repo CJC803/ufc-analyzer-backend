@@ -89,14 +89,13 @@ def update_event(
 # ------------------------------------------------------
 def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
     """
-    Returns strict JSON for next UFC event.
+    Strict JSON-only request for next UFC event.
     """
 
     prompt = """
-You MUST return ONLY valid JSON. No commentary. No markdown. No labels.
+Return ONLY valid JSON. No commentary. No markdown. No backticks.
 
-Return EXACTLY this structure for the NEXT upcoming UFC event:
-
+JSON format:
 {
   "event_name": "",
   "event_date": "",
@@ -107,15 +106,18 @@ Return EXACTLY this structure for the NEXT upcoming UFC event:
 }
 
 Rules:
-- Do NOT include backticks.
-- Do NOT include comments.
-- Use the EXACT keys above.
-- Return only JSON.
+- Do NOT include explanations.
+- Do NOT include sentences before or after.
+- Only return a JSON object.
+- If unsure, guess the next UFC event.
 """
 
     raw = gpt_safe_call([{"role": "user", "content": prompt}])
 
-    print("RAW GPT NEXT EVENT RESPONSE:", raw)
+    # 🔥 DEBUG LOGGING FOR RAILWAY
+    print("======== RAW GPT EVENT RESPONSE ========")
+    print(raw)
+    print("========================================")
 
     import json
     try:
@@ -123,6 +125,7 @@ Rules:
     except Exception as e:
         print("JSON PARSE ERROR:", e)
         return None
+
 
 
 
