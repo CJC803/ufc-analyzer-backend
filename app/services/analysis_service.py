@@ -1,175 +1,91 @@
 import logging
 from typing import Dict, Any, List
-from app.utils.openai_client import run_stream
 
-logger = logging.getLogger(**name**)
+from app.schemas import FightPair
+from app.utils.gpt_safe import gpt_safe_call
 
-# ---------------------------------------------------------
-
-# Lightweight statistical scoring
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
-
-def compute_stats_features(fighter: Dict[str, Any]) -> Dict[str, float]:
-"""
-Computes basic metrics from UFCStats + fight history.
-Returns dict of numeric features usable in GPT analysis.
-"""
-
-```
-stats = fighter.get("career_stats", {})
-fh = fighter.get("fight_history", {}).get("tapology", [])
-
-# --- Striking metrics ---
-slpm = float(stats.get("SLpM", 0) or 0)
-sapm = float(stats.get("SApM", 0) or 0)
-striking_diff = slpm - sapm
-
-# --- Grappling metrics ---
-tda = float(stats.get("TDAvg", 0) or 0)
-tdf = float(stats.get("TDDef", 0) or 0)
-
-# --- Finish rate ---
-wins = sum(1 for f in fh if f.get("result") == "Win")
-losses = sum(1 for f in fh if f.get("result") == "Loss")
-finishes = sum(
-    1
-    for f in fh
-    if f.get("method", "").lower() in ["ko", "tko", "submission", "sub"]
-)
-finish_rate = finishes / wins if wins > 0 else 0
-
-# --- Experience score ---
-total_fights = len(fh)
-experience = total_fights / 20  # normalized (20 fights = 1.0)
-
-# --- Momentum score (last 5 fights) ---
-recent = fh[:5]
-if recent:
-    wins_recent = sum(1 for f in recent if f.get("result") == "Win")
-    momentum = wins_recent / len(recent)
-else:
-    momentum = 0.5  # neutral baseline
-
-return {
-    "striking_diff": striking_diff,
-    "takedown_avg": tda,
-    "takedown_def": tdf,
-    "finish_rate": finish_rate,
-    "experience": experience,
-    "momentum": momentum,
-}
-```
-
+# Compute simple statistical features
+# (placeholder – you can extend later with real UFC data)
 # ---------------------------------------------------------
 
-# Build GPT prompt
+def compute_stats_features(fight_card: List[FightPair]) -> Dict[str, Any]:
+    """
+    Produces basic structural metadata that later gets fed into GPT
+    for the final analysis prompt.
+    """
+
+    return {
+        "num_fights": len(fight_card),
+        "fighters": [
+            {"a": f.fighter_a, "b": f.fighter_b, "weight_class": f.weight_class}
+            for f in fight_card
+        ]
+    }
 
 # ---------------------------------------------------------
-
-def build_analysis_prompt(matchup_bundle: Dict[str, Any]) -> List[Dict[str, str]]:
-"""
-Builds the system + user messages for GPT streaming analysis.
-Input format: {
-"event_name": "",
-"fighter_a": {merged fighter object},
-"fighter_b": {merged fighter object},
-"odds": {odds_a, odds_b},
-"a_features": {computed features},
-"b_features": {computed features}
-}
-"""
-
-```
-a = matchup_bundle["fighter_a"]
-b = matchup_bundle["fighter_b"]
-
-af = matchup_bundle["a_features"]
-bf = matchup_bundle["b_features"]
-odds = matchup_bundle["odds"]
-
-user_prompt = f"""
-```
-
-You are an MMA analysis engine. Use *both* the statistical metrics and the
-fighter summaries to produce a hybrid analysis.
-
-Provide:
-
-1. A detailed but concise technical analysis (striking, grappling, cardio, momentum).
-2. A prediction (winner + method + confidence %).
-3. A short justification referencing stats + style matchups.
-4. Consider the odds and identify if value exists.
-
---- EVENT: {matchup_bundle['event_name']} ---
-
-### Fighter A: {a['name']}
-
-Record: {a.get('record')}
-Height: {a.get('height')}
-Reach: {a.get('reach')}
-Style Summary: {a.get('style_summary')}
-
-Stats:
-
-* Striking differential: {af['striking_diff']}
-* Takedown avg: {af['takedown_avg']}
-* Takedown defense: {af['takedown_def']}
-* Finish rate: {af['finish_rate']}
-* Experience score: {af['experience']}
-* Momentum: {af['momentum']}
-
-### Fighter B: {b['name']}
-
-Record: {b.get('record')}
-Height: {b.get('height')}
-Reach: {b.get('reach']}
-Style Summary: {b.get('style_summary')}
-
-Stats:
-
-* Striking differential: {bf['striking_diff']}
-* Takedown avg: {bf['takedown_avg']}
-* Takedown defense: {bf['takedown_def']}
-* Finish rate: {bf['finish_rate']}
-* Experience score: {bf['experience']}
-* Momentum: {bf['momentum']}
-
-### ODDS
-
-{a['name']}: {odds.odds_a}
-{b['name']}: {odds.odds_b}
-
-### FORMAT (STRICT):
-
-Return JSON:
-{
-"analysis": "...",
-"prediction": {
-"winner": "",
-"method": "",
-"confidence": 0.0
-},
-"value_notes": ""
-}
-"""
-
-```
-return [
-    {"role": "system", "content": "You are a professional MMA analyst and data modeler."},
-    {"role": "user", "content": user_prompt},
-]
-```
-
+# Build the prompt GPT will use for predictions
 # ---------------------------------------------------------
 
-# Streaming analysis
+def build_analysis_prompt(event_json: Dict[str, Any], stats: Dict[str, Any]) -> str:
+    """
+    Creates the prompt sent to GPT to generate:
+    - fight-by-fight predictions
+    - reasoning
+    - suggested parlay legs
+    """
+
+    event_name = event_json.get("event_name", "Unknown Event")
+    fight_card = stats.get("fighters", [])
+
+    prompt = (
+        f"You are an MMA fight analyst.\n"
+        f"Event: {event_name}\n"
+        f"Number of fights: {stats['num_fights']}\n\n"
+        f"For each fight, predict:\n"
+        f" - Winner\n"
+        f" - Method (KO/TKO, SUB, DEC)\n"
+        f" - Confidence 1-10\n"
+        f" - Key analytics (reach, style, pace, etc.)\n\n"
+        f"Then generate:\n"
+        f" - A safe parlay\n"
+        f" - A longshot parlay\n\n"
+        f"Fight card:\n"
+    )
+
+    for f in fight_card:
+        wc = f["weight_class"] or "Unknown"
+        prompt += f"- {f['a']} vs {f['b']} ({wc})\n"
+
+    prompt += "\nReturn ONLY JSON in this format:\n"
+    prompt += "{ 'predictions': [...], 'parlays': {...} }"
+
+    return prompt
 
 # ---------------------------------------------------------
+# Run full GPT analysis workflow
+# ---------------------------------------------------------
 
-def stream_fight_analysis(matchup_bundle: Dict[str, Any]):
-"""
-Runs GPT streaming analysis. The caller (FastAPI) will stream each token to Streamlit.
-"""
-messages = build_analysis_prompt(matchup_bundle)
-return run_stream(messages, model="gpt-4o-mini", temperature=0.2)
+def run_full_analysis(event_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Bundle:
+    1. Compute stats features
+    2. Build GPT prompt
+    3. Call GPT safely
+    4. Parse JSON
+    """
+
+    stats = compute_stats_features(event_json["fight_card"])
+    prompt = build_analysis_prompt(event_json, stats)
+
+    raw = gpt_safe_call([prompt])
+
+    try:
+        data = eval(raw)  # expected JSON-like structure
+    except Exception:
+        logger.error("GPT returned malformed analysis JSON.")
+        data = {}
+
+    return data
