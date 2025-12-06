@@ -107,5 +107,38 @@ merged["reach"] = _pick_best(
 )
 
 merged["stance"] = _pick_best(
-    attrs.get("
+    attrs.get("Stance"),
+    metadata.get("stance") if metadata else None
+)
+
+merged["dob"] = _pick_best(
+    attrs.get("DOB"),
+    sd_details.get("Birth Date")
+)
+
+# --------------------------
+# Stats and fight history
+# --------------------------
+merged["career_stats"] = ufcstats.get("career_stats", {}) if ufcstats else {}
+
+merged["fight_history"] = {
+    "ufcstats": ufcstats.get("fight_history") if ufcstats else [],
+    "sherdog": sherdog.get("fight_history") if sherdog else [],
+    "tapology": tapology.get("history") if tapology else []
+}
+
+# --------------------------
+# Style summary (GPT-generated Tapology summary)
+# --------------------------
+merged["style_summary"] = tapology.get("summary") if tapology else None
+
+# --------------------------
+# Source URLs
+# --------------------------
+merged["sources"] = {
+    "ufcstats": ufcstats.get("ufcstats_url") if ufcstats else None,
+    "sherdog": sherdog.get("sherdog_url") if sherdog else None
+}
+
+return merged
 ```
