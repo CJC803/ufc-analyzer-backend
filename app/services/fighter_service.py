@@ -7,7 +7,7 @@ from app.utils.ufcstats_scraper import get_ufcstats_profile
 from app.utils.sherdog_scraper import get_sherdog_profile
 from app.utils.fighter_merge import merge_fighter_data
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
 
