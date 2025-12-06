@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime
 
+from app.routes.event_routes import router as events_router
 from app.database import get_db
 from app.services.event_service import load_next_event, get_event_by_name
 from app.services.fighter_service import load_fighter_data
@@ -26,7 +27,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+app.include_router(events_router)
 
 # --------------------------------------------------------------
 # ROOT
