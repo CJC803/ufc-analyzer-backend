@@ -6,4 +6,5 @@ openai
 requests
 beautifulsoup4
 pydantic
+pydantic-settings>=2.0.0
 python-dotenv
