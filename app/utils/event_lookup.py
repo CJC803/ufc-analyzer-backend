@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 from app.schemas import EventRead, FightPair
 from app.utils.gpt_safe import gpt_safe_call
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 UFC_UPCOMING = "[http://ufcstats.com/statistics/events/upcoming](http://ufcstats.com/statistics/events/upcoming)"
 UFC_BASE = "[http://ufcstats.com](http://ufcstats.com)"
