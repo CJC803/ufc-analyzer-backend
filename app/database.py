@@ -1,32 +1,21 @@
+# app/database.py
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from app.config import settings
+import os
 
-# SQLAlchemy engine (sync)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(
-settings.DATABASE_URL,
-pool_pre_ping=True,       # Avoid dropped-connection errors
-pool_recycle=3600         # Helps with Railway idle timeouts
-)
+engine = create_engine(DATABASE_URL)
 
-# Session factory
-
-SessionLocal = sessionmaker(
-autocommit=False,
-autoflush=False,
-bind=engine
-)
-
-# Base class for models
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-# Dependency for FastAPI endpoints
 
 def get_db():
-db = SessionLocal()
-try:
-yield db
-finally:
-db.close()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
