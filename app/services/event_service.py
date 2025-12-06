@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.models import Event
 from app.utils.event_lookup import get_next_ufc_event
 
-logger = logging.getLogger(**name**)
+logger = logging.getLogger("event_service")
 
 # ---------------------------------------------------------
 
