@@ -1,91 +1,101 @@
 import logging
 from typing import Dict, Any, List
 
-from app.schemas import FightPair
-from app.utils.gpt_safe import gpt_safe_call
+from app.services.odds_service import get_odds_for_matchups
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------
-# Compute simple statistical features
-# (placeholder – you can extend later with real UFC data)
-# ---------------------------------------------------------
 
-def compute_stats_features(fight_card: List[FightPair]) -> Dict[str, Any]:
+# ---------------------------------------------
+# STEP 1 — Extract structured matchup features
+# ---------------------------------------------
+def compute_stats_features(event_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Produces basic structural metadata that later gets fed into GPT
-    for the final analysis prompt.
-    """
-
-    return {
-        "num_fights": len(fight_card),
-        "fighters": [
-            {"a": f.fighter_a, "b": f.fighter_b, "weight_class": f.weight_class}
-            for f in fight_card
+    Input: event_data = {
+        'event_name': str,
+        'fight_card': [
+            {
+                'fighter_a': str,
+                'fighter_b': str,
+                'weight_class': str | None
+            }
         ]
     }
 
-# ---------------------------------------------------------
-# Build the prompt GPT will use for predictions
-# ---------------------------------------------------------
-
-def build_analysis_prompt(event_json: Dict[str, Any], stats: Dict[str, Any]) -> str:
-    """
-    Creates the prompt sent to GPT to generate:
-    - fight-by-fight predictions
-    - reasoning
-    - suggested parlay legs
+    Output: List of enriched matchup dicts, with odds injected.
     """
 
-    event_name = event_json.get("event_name", "Unknown Event")
-    fight_card = stats.get("fighters", [])
+    if "fight_card" not in event_data:
+        logger.error("event_data missing fight_card.")
+        return []
 
-    prompt = (
-        f"You are an MMA fight analyst.\n"
-        f"Event: {event_name}\n"
-        f"Number of fights: {stats['num_fights']}\n\n"
-        f"For each fight, predict:\n"
-        f" - Winner\n"
-        f" - Method (KO/TKO, SUB, DEC)\n"
-        f" - Confidence 1-10\n"
-        f" - Key analytics (reach, style, pace, etc.)\n\n"
-        f"Then generate:\n"
-        f" - A safe parlay\n"
-        f" - A longshot parlay\n\n"
-        f"Fight card:\n"
-    )
+    matchups = event_data["fight_card"]
 
-    for f in fight_card:
-        wc = f["weight_class"] or "Unknown"
-        prompt += f"- {f['a']} vs {f['b']} ({wc})\n"
+    # Build a simple pair list for the odds service
+    fighter_pairs = [
+        {
+            "fighter_a": m["fighter_a"],
+            "fighter_b": m["fighter_b"]
+        }
+        for m in matchups
+    ]
 
-    prompt += "\nReturn ONLY JSON in this format:\n"
-    prompt += "{ 'predictions': [...], 'parlays': {...} }"
+    # Fetch betting odds (or placeholder)
+    odds_lookup = get_odds_for_matchups(fighter_pairs)
 
-    return prompt
+    enriched = []
 
-# ---------------------------------------------------------
-# Run full GPT analysis workflow
-# ---------------------------------------------------------
+    for m in matchups:
+        key = f"{m['fighter_a']} vs {m['fighter_b']}"
 
-def run_full_analysis(event_json: Dict[str, Any]) -> Dict[str, Any]:
+        odds = odds_lookup.get(key, {
+            "fighter_a_odds": None,
+            "fighter_b_odds": None,
+            "source": "none"
+        })
+
+        enriched.append({
+            "fighter_a": m["fighter_a"],
+            "fighter_b": m["fighter_b"],
+            "weight_class": m.get("weight_class"),
+            "odds": odds
+        })
+
+    return enriched
+
+
+# --------------------------------------------------------
+# STEP 2 — Construct GPT prompt from structured features
+# --------------------------------------------------------
+def build_analysis_prompt(event_name: str, fight_features: List[Dict[str, Any]]) -> str:
     """
-    Bundle:
-    1. Compute stats features
-    2. Build GPT prompt
-    3. Call GPT safely
-    4. Parse JSON
+    Convert structured features → a GPT analysis prompt
     """
 
-    stats = compute_stats_features(event_json["fight_card"])
-    prompt = build_analysis_prompt(event_json, stats)
+    if not fight_features:
+        return "No fight matchups were provided."
 
-    raw = gpt_safe_call([prompt])
+    lines = []
+    lines.append(f"Analyze the upcoming UFC event: {event_name}.")
+    lines.append("Provide detailed breakdowns for each matchup including:")
+    lines.append("- Stylistic matchup assessment")
+    lines.append("- Paths to victory")
+    lines.append("- Betting market interpretation")
+    lines.append("- Predicted winner and method")
+    lines.append("")
+    lines.append("Here is the structured data:")
 
-    try:
-        data = eval(raw)  # expected JSON-like structure
-    except Exception:
-        logger.error("GPT returned malformed analysis JSON.")
-        data = {}
+    for f in fight_features:
+        lines.append("\n--- MATCHUP ---")
+        lines.append(f"Fighter A: {f['fighter_a']}")
+        lines.append(f"Fighter B: {f['fighter_b']}")
+        lines.append(f"Weight Class: {f.get('weight_class')}")
 
-    return data
+        odds = f["odds"]
+        lines.append(f"Odds (A): {odds.get('fighter_a_odds')}")
+        lines.append(f"Odds (B): {odds.get('fighter_b_odds')}")
+        lines.append(f"Odds Source: {odds.get('source')}")
+
+    lines.append("\nNow provide your expert-level fight predictions:")
+
+    return "\n".join(lines)
