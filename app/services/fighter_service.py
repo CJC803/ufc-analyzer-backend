@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Fighter
 from app.utils.ufcstats_scraper import get_ufcstats_profile
-from app.utils.sherdog_scraper import fetch_sherdog_fighter
+from app.utils.sherdog_scraper import fetch_sherdog_profile
 from app.utils.tapology_scraper import fetch_tapology_fighter
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def load_fighter_data(db: Session, name: str) -> Fighter:
             name=name,
             metadata_json=combined_meta,
             ufcstats_data=ufcstats_data,
-            sherdog_data=sherdog_data,
+            sherdog_data=get_sherdog_profile(name),
             tapology_data=tapology_data,
         )
 
