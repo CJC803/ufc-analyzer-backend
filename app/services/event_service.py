@@ -44,18 +44,12 @@ def get_event_by_name(db: Session, name: str) -> Optional[Event]:
 # ------------------------------------------------------
 # GPT — Fetch Next UFC Event
 # ------------------------------------------------------
-import requests
-from datetime import datetime
-from app.config import settings
-
-ODDS_API_KEY = settings.THE_ODDS_API_KEY   # or ODDS_API_KEY if renamed
-EVENTS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/events"
-
+from datetime import datetime, timezone
 
 def _fetch_next_event_from_odds_api() -> Optional[Dict[str, Any]]:
     """
     Uses The Odds API to fetch REAL upcoming MMA events.
-    Returns the NEXT event in your standardized structure.
+    Returns ONLY events that have not yet started (UTC aware).
     """
 
     params = {
@@ -74,30 +68,42 @@ def _fetch_next_event_from_odds_api() -> Optional[Dict[str, Any]]:
         logger.warning("No MMA events returned from Odds API.")
         return None
 
-    # Sort by start time
-    def parse_time(ev):
+    now_utc = datetime.now(timezone.utc)
+
+    upcoming = []
+    for ev in events:
+        raw_time = ev.get("commence_time")
+        if not raw_time:
+            continue
+
         try:
-            return datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
+            event_time = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
         except:
-            return datetime.max
+            continue
 
-    events_sorted = sorted(events, key=parse_time)
-    next_event = events_sorted[0]
+        # ONLY keep events whose start time is still in the future
+        if event_time > now_utc:
+            upcoming.append((event_time, ev))
 
-    # Extract fight card from the event
+    if not upcoming:
+        logger.warning("No future MMA events found.")
+        return None
+
+    # Pick the nearest upcoming event
+    upcoming.sort(key=lambda x: x[0])
+    next_event_time, next_event = upcoming[0]
+
     fight_card = []
     for matchup in next_event.get("competitors", []):
-        # Some APIs return 2 names as an array; others return objects —
-        # Normalize it
         a = matchup.get("home_team") or matchup.get("competitors", [None, None])[0]
         b = matchup.get("away_team") or matchup.get("competitors", [None, None])[1]
         if a and b:
             fight_card.append({"fighter_a": a, "fighter_b": b})
 
     return {
-        "event_name": next_event.get("sport_title", "UFC Event"),
-        "event_date": next_event.get("commence_time"),
-        "location": next_event.get("venue", None),
+        "event_name": next_event.get("sport_title", "MMA Event"),
+        "event_date": next_event_time.isoformat(),
+        "location": next_event.get("venue"),
         "fight_card": fight_card,
     }
 
