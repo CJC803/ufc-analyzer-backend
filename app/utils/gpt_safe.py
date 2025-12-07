@@ -1,42 +1,33 @@
 import logging
 import os
-from typing import Any, List
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def gpt_safe_call(messages: List[Any]) -> str:
+def gpt_safe_call(inputs: list[str]) -> str:
     """
-    Accepts either:
-      - ["user prompt"]
-      - [{"role": "user", "content": "..."}]
-    
-    Always converts to the correct ChatCompletion format.
+    Wrapper around OpenAI Responses API using the new SDK format.
+    Accepts a LIST OF STRINGS and joins them into a single input block.
     """
-
-    # Normalize messages into OpenAI format
-    formatted = []
-
-    for m in messages:
-        if isinstance(m, str):
-            formatted.append({"role": "user", "content": m})
-        elif isinstance(m, dict):
-            # already a formatted message
-            formatted.append(m)
-        else:
-            logger.error(f"Invalid message type: {type(m)} — {m}")
-            continue
 
     try:
-        response = client.chat.completions.create(
+        # Combine all message strings into one payload
+        final_input = "\n\n".join(inputs)
+
+        response = client.responses.create(
             model="gpt-4o-mini",
-            messages=formatted,
-            temperature=0.4
+            input=final_input,
+            max_output_tokens=500,
+            temperature=0.4,
         )
 
-        return response.choices[0].message.content.strip()
+        # New SDK returns output at:
+        # response.output[0].content[0].text
+        output_text = response.output_text
+
+        return output_text.strip()
 
     except Exception as e:
         logger.error(f"GPT call failed: {e}")
