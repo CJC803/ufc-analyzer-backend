@@ -1,7 +1,12 @@
 import json
 from app.utils.openai_client import run
 
-def generate_synthetic_odds(fighter_a: str, fighter_b: str, a_profile=None, b_profile=None):
+def generate_synthetic_odds(
+    fighter_a: str,
+    fighter_b: str,
+    a_profile=None,
+    b_profile=None
+):
     prompt = f"""
     Generate realistic *synthetic* MMA betting odds for:
 
@@ -34,6 +39,7 @@ def generate_synthetic_odds(fighter_a: str, fighter_b: str, a_profile=None, b_pr
     """
 
     raw = run([{"role": "user", "content": prompt}], model="gpt-4o-mini")
+
     try:
         return json.loads(raw)
     except:
