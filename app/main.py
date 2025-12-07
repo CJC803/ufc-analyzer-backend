@@ -48,7 +48,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(events_router)
 
 # --------------------------------------------------------------
 # ROOT
