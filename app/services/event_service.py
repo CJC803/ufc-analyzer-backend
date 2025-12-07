@@ -123,3 +123,58 @@ def scrape_fight_card(event_url: str):
             seen.add(key)
 
     return cleaned
+
+def load_next_event(db: Session):
+    """
+    Main entry:
+    1. Scrape UFC Stats for the next upcoming event
+    2. Store or update it in DB
+    3. Return event JSON
+    """
+
+    data = scrape_upcoming_ufc_event()  # ← THIS MUST EXIST IN THIS FILE
+
+    if not data:
+        return None
+
+    name = data["event_name"]
+
+    existing = (
+        db.query(Event)
+        .filter(Event.event_name.ilike(name))
+        .first()
+    )
+
+    if existing:
+        # Update existing event
+        existing.event_date = data.get("event_date")
+        existing.location = data.get("location")
+        existing.fight_card_json = data.get("fight_card", [])
+        db.commit()
+        db.refresh(existing)
+        return {
+            "event_name": existing.event_name,
+            "event_date": existing.event_date,
+            "location": existing.location,
+            "fight_card": existing.fight_card_json,
+        }
+
+    # Create new event
+    new_event = Event(
+        event_name=data["event_name"],
+        event_date=data.get("event_date"),
+        location=data.get("location"),
+        fight_card_json=data.get("fight_card", []),
+    )
+
+    db.add(new_event)
+    db.commit()
+    db.refresh(new_event)
+
+    return {
+        "event_name": new_event.event_name,
+        "event_date": new_event.event_date,
+        "location": new_event.location,
+        "fight_card": new_event.fight_card_json,
+    }
+
