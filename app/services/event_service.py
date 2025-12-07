@@ -8,6 +8,15 @@ from app.utils.gpt_safe import gpt_safe_call
 
 logger = logging.getLogger(__name__)
 
+# -----------------------------------
+# Odds API configuration
+# -----------------------------------
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+EVENTS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/events"
+
+if not ODDS_API_KEY:
+    logger.error("ODDS_API_KEY is missing! Set it in Railway environment variables.")
+    
 # ------------------------------------------------------
 # Extract JSON from GPT output
 # ------------------------------------------------------
