@@ -12,7 +12,7 @@ from app.routes.event_routes import router as event_router
 # SERVICES
 from app.services.fighter_service import load_fighter_data
 from app.services.analysis_service import compute_stats_features, build_analysis_prompt
-from app.services.odds_service import get_odds_for_matchups
+
 
 # UTILS
 from app.utils.tapology_batch import get_tapology_batch
