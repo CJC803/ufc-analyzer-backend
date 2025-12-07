@@ -62,15 +62,17 @@ def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
 
     raw = gpt_safe_call([prompt])
 
-    print("======== RAW GPT EVENT RESPONSE ========")
-    print(raw)
-    print("========================================")
+    clean = extract_json(raw)
 
-    try:
-        return json.loads(raw)
-    except Exception as e:
-        logger.error(f"Could not parse GPT event response: {e}")
-        return None
+print("======== RAW GPT EVENT RESPONSE ========")
+print(clean)   # <-- now prints the CLEAN version
+print("========================================")
+
+try:
+    return json.loads(clean)
+except Exception as e:
+    logger.error(f"Could not parse GPT event response: {e}")
+    return None
 
 
 
