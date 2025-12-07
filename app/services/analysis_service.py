@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------
 # ODDS API CONFIG
 # --------------------------------------------
-ODDS_API_KEY = settings.ODDS_API_KEY
+ODDS_API_KEY = settings.THE_ODDS_API_KEY
 ODDS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/odds"
 
 
