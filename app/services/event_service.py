@@ -141,7 +141,7 @@ def update_event(db: Session, event: Event, data: Dict[str, Any]) -> Event:
 # Load Next Event (Main)
 # ------------------------------------------------------
 def load_next_event(db: Session) -> Optional[Dict[str, Any]]:
-    gpt_data = _gpt_fetch_next_event()
+    gpt_data = _fetch_next_event_from_odds_api()
     if not gpt_data:
         return None
 
