@@ -22,6 +22,8 @@ def get_event_by_name(db: Session, name: str) -> Optional[Event]:
 # ------------------------------------------------------
 # GPT — Fetch Next UFC Event
 # ------------------------------------------------------
+import json  # <-- REQUIRED
+
 def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
     prompt = """
     Return the *next upcoming UFC event* in PURE JSON only.
@@ -46,9 +48,10 @@ def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
 
     try:
         return json.loads(raw)
-    except Exception:
-        logger.error("Could not parse GPT event response.")
+    except Exception as e:
+        logger.error(f"Could not parse GPT event response: {e}")
         return None
+
 
 
 # ------------------------------------------------------
