@@ -4,17 +4,23 @@ from datetime import datetime
 import logging
 from sqlalchemy.orm import Session
 
+from app.models import Event  # ← REQUIRED IMPORT
+
 logger = logging.getLogger(__name__)
 
 UFC_EVENTS_URL = "http://ufcstats.com/statistics/events/upcoming"
 
+
+# ---------------------------------------------------------
+# SCRAPE NEXT UPCOMING EVENT
+# ---------------------------------------------------------
 def scrape_upcoming_ufc_event():
     """
     Scrapes UFCStats for the next upcoming event.
-
-    ALWAYS returns a dict with event_name, date, location, and fight_card,
-    even if the event URL is missing (UFCStats sometimes hides it until later).
+    ALWAYS returns a dict with event_name, event_date, location, and fight_card
+    unless the page is truly empty.
     """
+
     try:
         resp = requests.get(UFC_EVENTS_URL, timeout=10)
         resp.raise_for_status()
@@ -23,71 +29,61 @@ def scrape_upcoming_ufc_event():
         return None
 
     soup = BeautifulSoup(resp.text, "html.parser")
-
     rows = soup.select("table.b-statistics__table-events tbody tr")
 
     if not rows:
-        logger.warning("No upcoming UFC event rows found in UFC Stats.")
+        logger.warning("No upcoming event rows found in UFC Stats.")
         return None
 
-    for row in rows:
-        cols = row.find_all("td")
-        if len(cols) < 4:
-            continue
+    # Get FIRST event only
+    row = rows[0]
+    cols = row.find_all("td")
 
-        event_name = cols[0].get_text(strip=True)
-        link_tag = cols[0].find("a")
-        event_href = link_tag["href"] if link_tag and link_tag.has_attr("href") else None
+    if len(cols) < 3:
+        logger.warning("Row found but missing columns.")
+        return None
 
-        date_text = cols[1].get_text(strip=True)
-        location = cols[2].get_text(strip=True) or None
+    event_name = cols[0].get_text(strip=True)
+    link_tag = cols[0].find("a")
+    event_href = link_tag["href"] if link_tag and link_tag.has_attr("href") else None
 
-        # Robust date parsing
-        try:
-            date_obj = datetime.strptime(date_text, "%B %d, %Y")
-            event_date_iso = date_obj.date().isoformat()
-        except Exception:
-            logger.warning(f"Could not parse date: {date_text}")
-            event_date_iso = None
+    date_text = cols[1].get_text(strip=True)
+    location = cols[2].get_text(strip=True) or None
 
-        event_data = {
-            "event_name": event_name,
-            "event_date": event_date_iso,
-            "location": location,
-            "event_url": event_href,
-        }
+    # Safe date parsing
+    try:
+        dt = datetime.strptime(date_text, "%B %d, %Y")
+        event_date_iso = dt.date().isoformat()
+    except:
+        logger.warning(f"Could not parse event date: {date_text}")
+        event_date_iso = None
 
-        # ------------------------------
-        # CASE A: No URL (today/tomorrow)
-        # ------------------------------
-        if not event_href:
-            logger.warning(
-                f"No event URL available for upcoming event '{event_name}'. "
-                f"Returning partial event without fight card."
-            )
-            event_data["fight_card"] = []
-            return event_data
+    event_data = {
+        "event_name": event_name,
+        "event_date": event_date_iso,
+        "location": location,
+        "event_url": event_href,
+    }
 
-        # ------------------------------
-        # CASE B: Full scrape possible
-        # ------------------------------
-        fight_card = scrape_fight_card(event_href)
-        event_data["fight_card"] = fight_card
+    # -----------------------------------------
+    # If no event URL, return partial event
+    # -----------------------------------------
+    if not event_href:
+        logger.warning(
+            f"No event URL available for '{event_name}'. Returning partial event."
+        )
+        event_data["fight_card"] = []
         return event_data
 
-    return None
+    # Scrape fight card if URL exists
+    event_data["fight_card"] = scrape_fight_card(event_href)
+    return event_data
 
 
-
-
+# ---------------------------------------------------------
+# SCRAPE FIGHT CARD FOR AN EVENT PAGE
+# ---------------------------------------------------------
 def scrape_fight_card(event_url: str):
-    """
-    Scrapes full fight card from a UFCStats event detail page.
-    Returns:
-       [
-         { "fighter_a": "Name", "fighter_b": "Name" }
-       ]
-    """
     try:
         resp = requests.get(event_url, timeout=10)
         resp.raise_for_status()
@@ -97,28 +93,23 @@ def scrape_fight_card(event_url: str):
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
+    rows = soup.select("tr.b-fight-details__table-row") or \
+           soup.select("tr.b-fight-details__table-row.b-fight-details__table-row__hover")
+
     fights = []
 
-    # UFCStats uses several possible row types, so match both
-    fight_rows = soup.select("tr.b-fight-details__table-row") or \
-                  soup.select("tr.b-fight-details__table-row.b-fight-details__table-row__hover")
-
-    for row in fight_rows:
+    for row in rows:
         fighters = row.select("p.b-fight-details__person-name")
-
         if len(fighters) >= 2:
-            fa = fighters[0].get_text(strip=True)
-            fb = fighters[1].get_text(strip=True)
+            f1 = fighters[0].get_text(strip=True)
+            f2 = fighters[1].get_text(strip=True)
 
-            if fa and fb:
-                fights.append({
-                    "fighter_a": fa,
-                    "fighter_b": fb,
-                })
+            if f1 and f2:
+                fights.append({"fighter_a": f1, "fighter_b": f2})
 
-    # Deduplicate any weird rows
-    cleaned = []
+    # Deduplicate
     seen = set()
+    cleaned = []
 
     for f in fights:
         key = f"{f['fighter_a']}__{f['fighter_b']}"
@@ -128,15 +119,12 @@ def scrape_fight_card(event_url: str):
 
     return cleaned
 
-def load_next_event(db: Session):
-    """
-    Main entry:
-    1. Scrape UFC Stats for the next upcoming event
-    2. Store or update it in DB
-    3. Return event JSON
-    """
 
-    data = scrape_upcoming_ufc_event()  # ← THIS MUST EXIST IN THIS FILE
+# ---------------------------------------------------------
+# LOAD + STORE NEXT EVENT IN DB
+# ---------------------------------------------------------
+def load_next_event(db: Session):
+    data = scrape_upcoming_ufc_event()
 
     if not data:
         return None
@@ -150,12 +138,12 @@ def load_next_event(db: Session):
     )
 
     if existing:
-        # Update existing event
-        existing.event_date = data.get("event_date")
-        existing.location = data.get("location")
+        existing.event_date = data["event_date"]
+        existing.location = data["location"]
         existing.fight_card_json = data.get("fight_card", [])
         db.commit()
         db.refresh(existing)
+
         return {
             "event_name": existing.event_name,
             "event_date": existing.event_date,
@@ -163,11 +151,10 @@ def load_next_event(db: Session):
             "fight_card": existing.fight_card_json,
         }
 
-    # Create new event
     new_event = Event(
         event_name=data["event_name"],
-        event_date=data.get("event_date"),
-        location=data.get("location"),
+        event_date=data["event_date"],
+        location=data["location"],
         fight_card_json=data.get("fight_card", []),
     )
 
@@ -181,4 +168,3 @@ def load_next_event(db: Session):
         "location": new_event.location,
         "fight_card": new_event.fight_card_json,
     }
-
