@@ -1,45 +1,33 @@
 import re
 import json
-
-def extract_json(text: str) -> str:
-    """
-    Pulls the FIRST valid JSON object out of text.
-    Handles markdown ```json fences and garbage.
-    """
-    # 1. Try fenced ```json blocks
-    fenced = re.search(r"```json(.*?)```", text, re.DOTALL)
-    if fenced:
-        return fenced.group(1).strip()
-
-    # 2. Try any {...} JSON object
-    brace = re.search(r"\{.*\}", text, re.DOTALL)
-    if brace:
-        return brace.group(0).strip()
-
-    # 3. Last resort: return raw text
-    return text.strip()
 import logging
-import json
 from typing import Dict, Any, List, Optional
 
-import requests
 from sqlalchemy.orm import Session
 
 from app.models import Fighter, Event, Prediction
 from app.utils.gpt_safe import gpt_safe_call
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------
-# ODDS API CONFIG (The Odds API)
-# --------------------------------------------
-THE_ODDS_API_KEY = settings.THE_ODDS_API_KEY
-ODDS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/odds"
+# ---------------------------------------------------------
+# JSON Extractor
+# ---------------------------------------------------------
+def extract_json(text: str) -> str:
+    """Extract JSON object from mixed GPT output."""
+    fenced = re.search(r"```json(.*?)```", text, re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+
+    brace = re.search(r"\{.*\}", text, re.DOTALL)
+    if brace:
+        return brace.group(0).strip()
+
+    return text.strip()
 
 
 # ---------------------------------------------------------
-# DB: Pull fighter by name
+# DB Helpers
 # ---------------------------------------------------------
 def _get_fighter(db: Session, name: str) -> Optional[Fighter]:
     if not name:
@@ -51,122 +39,41 @@ def _get_fighter(db: Session, name: str) -> Optional[Fighter]:
     )
 
 
-# ---------------------------------------------------------
-# DB: Build per-fighter features (stats bundles)
-# ---------------------------------------------------------
 def compute_stats_features(fighter: Optional[Fighter]) -> Dict[str, Any]:
-    """
-    Bundle all stored data for a fighter. If missing, return empty shell.
-    """
+    """Package stored fighter data for GPT."""
     if not fighter:
         return {
-            "metadata": {},
             "ufcstats": {},
             "sherdog": {},
             "tapology": {},
+            "metadata": {}
         }
 
     return {
-        "metadata": fighter.metadata_json or {},
         "ufcstats": fighter.ufcstats_json or {},
         "sherdog": fighter.sherdog_json or {},
         "tapology": fighter.tapology_json or {},
+        "metadata": fighter.metadata_json or {},
     }
 
 
 # ---------------------------------------------------------
-# ODDS: Fetch all current MMA odds once
+# Build GPT Prompt — stats only
 # ---------------------------------------------------------
-def _fetch_all_odds() -> Optional[List[Dict[str, Any]]]:
-    """
-    Calls The Odds API once and returns the raw event list.
-    """
-    if not THE_ODDS_API_KEY:
-        logger.warning("THE_ODDS_API_KEY not set; skipping odds.")
-        return None
-
-    params = {
-        "apiKey": THE_ODDS_API_KEY,
-        "regions": "us",
-        "markets": "h2h",
-        "oddsFormat": "american",
-    }
-
-    try:
-        resp = requests.get(ODDS_ENDPOINT, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        return data
-    except Exception as e:
-        logger.error(f"Odds API request failed: {e}")
-        return None
-
-
-def _find_odds_for_matchup(
-    all_odds: Optional[List[Dict[str, Any]]],
-    fighter_a: str,
-    fighter_b: str,
-) -> Optional[Dict[str, Any]]:
-    """
-    Given the entire odds payload, attempts to find a specific matchup.
-    Very fuzzy: just matches fighter names inside outcome names.
-    """
-    if not all_odds:
-        return None
-
-    f1 = fighter_a.lower()
-    f2 = fighter_b.lower()
-
-    for event in all_odds:
-        for bookmaker in event.get("bookmakers", []):
-            for market in bookmaker.get("markets", []):
-                outcomes = market.get("outcomes", [])
-                names = [o["name"].lower() for o in outcomes]
-
-                if f1 in names and f2 in names and len(outcomes) >= 2:
-                    # Normalize simple structure
-                    return {
-                        "source": bookmaker.get("title"),
-                        "event_key": event.get("id"),
-                        "event_start_time": event.get("commence_time"),
-                        "market_key": market.get("key"),
-                        "outcomes": outcomes,
-                    }
-
-    # No odds found for this fight
-    return None
-
-
-# ---------------------------------------------------------
-# Build GPT prompt for full card analysis
-# ---------------------------------------------------------
-def build_analysis_prompt(
-    event: Event,
-    enriched_fights: List[Dict[str, Any]]
-) -> str:
-    """
-    `enriched_fights` is a list of:
-    {
-      "fighter_a_name": str,
-      "fighter_b_name": str,
-      "fighter_a_features": {...},
-      "fighter_b_features": {...},
-      "odds": {... or None}
-    }
-    """
-
+def build_analysis_prompt(event: Event, enriched_fights: List[Dict[str, Any]]) -> str:
     prompt = f"""
-You are an expert MMA analyst and betting strategist.
+You are a world-class MMA analyst.
 
-Analyze the following UFC event and its fights.
-Use:
-- Technical styles
-- Recorded stats (where present)
-- Any available odds information
+Use ONLY the structured fighter statistics provided (UFCStats, Sherdog, Tapology).
+Do NOT invent records or stats. If data is missing, acknowledge uncertainty.
 
-OUTPUT FORMAT:
-Return ONLY JSON, no markdown.
-Use this EXACT schema:
+Your job:
+- Compare fighters
+- Identify stylistic and statistical advantages
+- Predict winner + method + confidence
+- Build **1–3 parlay ideas**
+
+OUTPUT FORMAT (JSON ONLY):
 
 {{
   "event_name": "",
@@ -176,18 +83,10 @@ Use this EXACT schema:
     {{
       "fighter_a": "",
       "fighter_b": "",
-      "winner": "",
-      "confidence": 0.0,
-      "method": "",
       "analysis": "",
-      "odds_view": {{
-        "has_odds": false,
-        "favorite": null,
-        "underdog": null,
-        "favorite_price": null,
-        "underdog_price": null,
-        "bookmaker": null
-      }}
+      "winner": "",
+      "method": "",
+      "confidence": 0.0
     }}
   ],
   "parlays": [
@@ -200,13 +99,10 @@ Use this EXACT schema:
 }}
 
 Rules:
-- confidence is a float between 0 and 1.
-- method can be a simple outcome like "Decision", "KO/TKO", "Submission".
-- odds_view.has_odds must be true if you found usable odds, else false.
-- parlays: propose 1–3 parlay ideas based on your fight predictions.
+- confidence = float between 0 and 1
+- method = "Decision", "KO/TKO", or "Submission"
 """
 
-    # We embed the event + enriched fights as JSON context at the end.
     context = {
         "event_name": event.event_name,
         "event_date": event.event_date,
@@ -221,11 +117,10 @@ Rules:
 
 
 # ---------------------------------------------------------
-# Run GPT with JSON cleaning
+# GPT Execution
 # ---------------------------------------------------------
 def _run_gpt_analysis(prompt: str) -> Optional[Dict[str, Any]]:
     raw = gpt_safe_call([prompt])
-
     clean = extract_json(raw)
 
     logger.info("======= CLEAN ANALYSIS JSON =======")
@@ -240,13 +135,10 @@ def _run_gpt_analysis(prompt: str) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------
-# Save Prediction to DB
+# Save prediction to DB
 # ---------------------------------------------------------
 def save_prediction(db: Session, event: Event, data: Dict[str, Any]) -> Prediction:
-    prediction = Prediction(
-        event_id=event.id,
-        analysis_json=data
-    )
+    prediction = Prediction(event_id=event.id, analysis_json=data)
     db.add(prediction)
     db.commit()
     db.refresh(prediction)
@@ -254,56 +146,42 @@ def save_prediction(db: Session, event: Event, data: Dict[str, Any]) -> Predicti
 
 
 # ---------------------------------------------------------
-# MAIN ENTRY: Analyze a single event
+# MAIN — Analyze Event Using Stats Only
 # ---------------------------------------------------------
 def analyze_event(db: Session, event: Event) -> Optional[Dict[str, Any]]:
     """
-    Full pipeline:
-    1. Pull fighters from DB
-    2. Fetch The Odds API data once
-    3. Enrich each fight with stats + odds
-    4. Ask GPT for card-wide analysis + parlays
-    5. Save to Prediction table
+    Pipeline:
+    1. Load fight card
+    2. Load fighter stats from DB
+    3. Build enriched_fights structure
+    4. Feed stats → GPT for analysis + parlay suggestions
+    5. Save to predictions table
     """
 
     fight_card = event.fight_card_json or []
-
-    # 1) Fetch odds once
-    all_odds = _fetch_all_odds()
-
-    enriched_fights: List[Dict[str, Any]] = []
+    enriched_fights = []
 
     for fight in fight_card:
         name_a = fight.get("fighter_a")
         name_b = fight.get("fighter_b")
 
-        fighter_a = _get_fighter(db, name_a) if name_a else None
-        fighter_b = _get_fighter(db, name_b) if name_b else None
-
-        a_features = compute_stats_features(fighter_a)
-        b_features = compute_stats_features(fighter_b)
-
-        odds = _find_odds_for_matchup(all_odds, name_a or "", name_b or "")
+        fighter_a = _get_fighter(db, name_a)
+        fighter_b = _get_fighter(db, name_b)
 
         enriched_fights.append(
             {
                 "fighter_a_name": name_a,
                 "fighter_b_name": name_b,
-                "fighter_a_features": a_features,
-                "fighter_b_features": b_features,
-                "odds": odds,
+                "fighter_a_features": compute_stats_features(fighter_a),
+                "fighter_b_features": compute_stats_features(fighter_b),
             }
         )
 
-    # 2) Build prompt
     prompt = build_analysis_prompt(event, enriched_fights)
-
-    # 3) Run GPT
     analysis = _run_gpt_analysis(prompt)
+
     if not analysis:
         return None
 
-    # 4) Save prediction to DB
     save_prediction(db, event, analysis)
-
     return analysis
