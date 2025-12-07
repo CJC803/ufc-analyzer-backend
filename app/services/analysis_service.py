@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.models import Fighter, Event, Prediction
 from app.utils.gpt_safe import gpt_safe_call
+from app.services.odds_service import generate_synthetic_odds
+
 
 logger = logging.getLogger(__name__)
 
