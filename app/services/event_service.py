@@ -1,15 +1,16 @@
 import logging
+import re
+import json
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from app.models import Event
 from app.utils.gpt_safe import gpt_safe_call
-import json
 
 logger = logging.getLogger(__name__)
 
-import re
-import json
-
+# ------------------------------------------------------
+# Extract JSON from GPT output
+# ------------------------------------------------------
 def extract_json(text: str) -> str:
     """
     Pulls the FIRST valid JSON object from any text.
@@ -21,12 +22,13 @@ def extract_json(text: str) -> str:
     if fenced:
         return fenced.group(1).strip()
 
-    # 2. Extract ANY {...} JSON block by matching braces
+    # 2. Extract ANY {...} JSON block
     brace = re.search(r"\{.*\}", text, re.DOTALL)
     if brace:
         return brace.group(0).strip()
 
     return text.strip()
+
 
 # ------------------------------------------------------
 # Get event by name
@@ -42,11 +44,9 @@ def get_event_by_name(db: Session, name: str) -> Optional[Event]:
 # ------------------------------------------------------
 # GPT — Fetch Next UFC Event
 # ------------------------------------------------------
-import json  # <-- REQUIRED
-
 def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
     prompt = """
-    Return the *next upcoming UFC event* in PURE JSON only.
+    Return the *next upcoming UFC event* in **pure JSON only**.
 
     Format EXACTLY:
 
@@ -60,24 +60,24 @@ def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
     }
     """
 
+    # IMPORTANT: gpt_safe_call expects a LIST OF STRINGS
     raw = gpt_safe_call([prompt])
 
     clean = extract_json(raw)
 
-print("======== RAW GPT EVENT RESPONSE ========")
-print(clean)   # <-- now prints the CLEAN version
-print("========================================")
+    print("======== RAW GPT EVENT RESPONSE ========")
+    print(clean)
+    print("========================================")
 
-try:
-    return json.loads(clean)
-except Exception as e:
-    logger.error(f"Could not parse GPT event response: {e}")
-    return None
-
+    try:
+        return json.loads(clean)
+    except Exception as e:
+        logger.error(f"Could not parse GPT event response: {e}")
+        return None
 
 
 # ------------------------------------------------------
-# Create event
+# Create Event
 # ------------------------------------------------------
 def create_event(db: Session, data: Dict[str, Any]) -> Event:
     event = Event(
@@ -96,10 +96,9 @@ def create_event(db: Session, data: Dict[str, Any]) -> Event:
 
 
 # ------------------------------------------------------
-# Update event if already exists
+# Update Event
 # ------------------------------------------------------
 def update_event(db: Session, event: Event, data: Dict[str, Any]) -> Event:
-
     event.event_name = data["event_name"]
     event.event_date = data.get("event_date")
     event.location = data.get("location")
@@ -113,7 +112,7 @@ def update_event(db: Session, event: Event, data: Dict[str, Any]) -> Event:
 
 
 # ------------------------------------------------------
-# MAIN — Load & save next event
+# Load Next Event (Main)
 # ------------------------------------------------------
 def load_next_event(db: Session) -> Optional[Dict[str, Any]]:
     gpt_data = _gpt_fetch_next_event()
@@ -132,7 +131,7 @@ def load_next_event(db: Session) -> Optional[Dict[str, Any]]:
 
 
 # ------------------------------------------------------
-# Convert Event ORM to dict
+# Convert ORM → JSON dict
 # ------------------------------------------------------
 def _event_to_json(event: Event) -> Dict[str, Any]:
     return {
