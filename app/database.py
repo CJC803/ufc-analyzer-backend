@@ -27,7 +27,9 @@ def get_db():
     finally:
         db.close()
 
-from app.models import *
+from app import models
+Base.metadata.create_all(bind=engine)
+
 
 # Create tables automatically on startup
 Base.metadata.create_all(bind=engine)
