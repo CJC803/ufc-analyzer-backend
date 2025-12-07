@@ -1,15 +1,15 @@
 import logging
 from typing import Optional, Dict, Any, List
-
 from sqlalchemy.orm import Session
 from app.models import Event
 from app.utils.gpt_safe import gpt_safe_call
+import json
 
 logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------
-# Helper: Get event by name (uses correct column!)
+# Get event by name
 # ------------------------------------------------------
 def get_event_by_name(db: Session, name: str) -> Optional[Event]:
     return (
@@ -20,160 +20,99 @@ def get_event_by_name(db: Session, name: str) -> Optional[Event]:
 
 
 # ------------------------------------------------------
-# Create event (matches your Event model schema)
+# GPT — Fetch Next UFC Event
 # ------------------------------------------------------
-def create_event(
-    db: Session,
-    event_name: str,
-    event_date: Optional[str],
-    location: Optional[str],
-    fight_card: List[Dict[str, Any]],
-    raw_metadata: Dict[str, Any]
-) -> Event:
+def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
+    prompt = """
+    Return the *next upcoming UFC event* in PURE JSON only.
 
+    Format EXACTLY:
+
+    {
+      "event_name": "",
+      "event_date": "",
+      "location": "",
+      "fight_card": [
+        {"fighter_a": "", "fighter_b": ""}
+      ]
+    }
+    """
+
+    raw = gpt_safe_call([prompt])
+
+    print("======== RAW GPT EVENT RESPONSE ========")
+    print(raw)
+    print("========================================")
+
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.error("Could not parse GPT event response.")
+        return None
+
+
+# ------------------------------------------------------
+# Create event
+# ------------------------------------------------------
+def create_event(db: Session, data: Dict[str, Any]) -> Event:
     event = Event(
-        event_name=event_name,
-        event_date=event_date,
-        location=location,
-        fight_card_json=fight_card,
-        metadata_json=raw_metadata,
+        event_name=data["event_name"],
+        event_date=data.get("event_date"),
+        location=data.get("location"),
+        fight_card_json=data.get("fight_card", []),
     )
 
     db.add(event)
     db.commit()
     db.refresh(event)
 
-    logger.info(f"Created event: {event_name}")
+    logger.info(f"Created new event: {event.event_name}")
     return event
 
 
 # ------------------------------------------------------
-# Update event (matches Event model’s fields)
+# Update event if already exists
 # ------------------------------------------------------
-def update_event(
-    db: Session,
-    event: Event,
-    event_date: Optional[str],
-    location: Optional[str],
-    fight_card: Optional[List[Dict[str, Any]]],
-    raw_metadata: Optional[Dict[str, Any]]
-):
-    updated = False
+def update_event(db: Session, event: Event, data: Dict[str, Any]) -> Event:
 
-    if event_date is not None:
-        event.event_date = event_date
-        updated = True
+    event.event_name = data["event_name"]
+    event.event_date = data.get("event_date")
+    event.location = data.get("location")
+    event.fight_card_json = data.get("fight_card", [])
 
-    if location is not None:
-        event.location = location
-        updated = True
+    db.commit()
+    db.refresh(event)
 
-    if fight_card is not None:
-        event.fight_card_json = fight_card
-        updated = True
-
-    if raw_metadata is not None:
-        event.metadata_json = raw_metadata
-        updated = True
-
-    if updated:
-        db.commit()
-        db.refresh(event)
-        logger.info(f"Updated event: {event.event_name}")
-
+    logger.info(f"Updated event: {event.event_name}")
     return event
 
 
 # ------------------------------------------------------
-# GPT — fetch next UFC event with correct schema
+# MAIN — Load & save next event
 # ------------------------------------------------------
-def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
-    """
-    Strict JSON-only request for next UFC event.
-    """
-
-    prompt = """
-Return ONLY valid JSON. No commentary. No markdown. No backticks.
-
-JSON format:
-{
-  "event_name": "",
-  "event_date": "",
-  "location": "",
-  "fight_card": [
-    {"fighter_a": "", "fighter_b": ""}
-  ]
-}
-
-Rules:
-- Do NOT include explanations.
-- Do NOT include sentences before or after.
-- Only return a JSON object.
-- If unsure, guess the next UFC event.
-"""
-
-    raw = gpt_safe_call([{"role": "user", "content": prompt}])
-
-    # 🔥 DEBUG LOGGING FOR RAILWAY
-    print("======== RAW GPT EVENT RESPONSE ========")
-    print(raw)
-    print("========================================")
-
-    import json
-    try:
-        return json.loads(raw)
-    except Exception as e:
-        print("JSON PARSE ERROR:", e)
+def load_next_event(db: Session) -> Optional[Dict[str, Any]]:
+    gpt_data = _gpt_fetch_next_event()
+    if not gpt_data:
         return None
 
-
-
-
-# ------------------------------------------------------
-# MAIN: load_next_event (never returns null)
-# ------------------------------------------------------
-def load_next_event(db: Session) -> Dict[str, Any]:
-    """
-    Loads the next UFC event from GPT (safe fallback).
-    Saves into DB with correct model fields.
-    """
-
-    event_data = _gpt_fetch_next_event()
-
-    if not event_data:
-        # ALWAYS return structure
-        return {
-            "event_name": None,
-            "event_date": None,
-            "location": None,
-            "fight_card": []
-        }
-
-    name = event_data["event_name"]
-    date = event_data.get("event_date")
-    location = event_data.get("location")
-    card = event_data["fight_card"]
-
+    name = gpt_data["event_name"]
     existing = get_event_by_name(db, name)
 
     if existing:
-        update_event(
-            db,
-            event=existing,
-            event_date=date,
-            location=location,
-            fight_card=card,
-            raw_metadata=event_data
-        )
-        return event_data
+        updated = update_event(db, existing, gpt_data)
+        return _event_to_json(updated)
 
-    create_event(
-        db,
-        event_name=name,
-        event_date=date,
-        location=location,
-        fight_card=card,
-        raw_metadata=event_data
-    )
+    new_event = create_event(db, gpt_data)
+    return _event_to_json(new_event)
 
-    return event_data
+
+# ------------------------------------------------------
+# Convert Event ORM to dict
+# ------------------------------------------------------
+def _event_to_json(event: Event) -> Dict[str, Any]:
+    return {
+        "event_name": event.event_name,
+        "event_date": event.event_date,
+        "location": event.location,
+        "fight_card": event.fight_card_json or [],
+    }
