@@ -12,6 +12,9 @@ from app.services.analysis_service import compute_stats_features, build_analysis
 from app.services.odds_service import get_odds_for_matchups  # MAKE SURE THIS FILE NAME MATCHES YOUR IMPLEMENTATION
 from app.utils.tapology_batch import get_tapology_batch
 from app.utils.openai_client import run, run_stream
+from app.routes.event_routes import router as event_router
+
+app.include_router(event_router)
 
 app = FastAPI(title="UFC Analyzer Backend", version="2.0")
 
