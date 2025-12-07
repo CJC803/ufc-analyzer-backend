@@ -99,17 +99,45 @@ def save_event(db: Session, data: Dict[str, Any]) -> Event:
 # ------------------------------------------------------
 # Public: return ALL upcoming events
 # ------------------------------------------------------
-def load_all_upcoming_events(db: Session) -> List[Dict[str, Any]]:
-    scraped = scrape_upcoming_events()
+from bs4 import BeautifulSoup
+
+def load_all_upcoming_events(db: Session):
+    resp = requests.get(UFC_STATS_EVENTS_URL, timeout=10)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    rows = soup.select("table.b-statistics__table-events tbody tr")
 
     saved = []
-    for evt in scraped:
-        saved_evt = save_event(db, evt)
+
+    for row in rows:
+        cols = row.find_all("td")
+        if len(cols) < 4:
+            continue
+
+        event_name = cols[0].get_text(strip=True)
+        date_str = cols[2].get_text(strip=True)
+        location = cols[3].get_text(strip=True)
+
+        try:
+            dt = datetime.datetime.strptime(date_str, "%B %d, %Y").isoformat()
+        except:
+            dt = None
+
+        event_id = extract_event_id(event_name, soup)
+        fight_card = scrape_fight_card(event_id) if event_id else []
+
+        stored = save_event(db, {
+            "event_name": event_name,
+            "event_date": dt,
+            "location": location,
+            "fight_card": fight_card
+        })
+
         saved.append({
-            "event_name": saved_evt.event_name,
-            "event_date": saved_evt.event_date,
-            "location": saved_evt.location,
-            "fight_card": saved_evt.fight_card_json or [],
+            "event_name": stored.event_name,
+            "event_date": stored.event_date,
+            "location": stored.location,
+            "fight_card": stored.fight_card_json
         })
 
     return saved
