@@ -4,8 +4,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.event_service import (
     load_next_event,
-    load_all_upcoming_events,
-    get_event_by_name
 )
 from app.services.analysis_service import analyze_event
 
