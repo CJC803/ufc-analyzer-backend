@@ -2,9 +2,16 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 psycopg2-binary
-openai
 requests
+
+# OpenAI SDK
+openai>=1.0.0
+
+# Parsing / scraping
 beautifulsoup4
-pydantic
-pydantic-settings>=2.0.0
+
+# Environment & config
 python-dotenv
+pydantic-settings>=2.0.0
+
+# REMOVE pydantic — FastAPI installs the correct version automatically
