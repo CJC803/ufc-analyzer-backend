@@ -8,6 +8,7 @@ from app.database import get_db
 
 # ROUTERS
 from app.routes.event_routes import router as event_router
+from app.routes.analysis_routes import router as analysis_router
 
 # SERVICES
 from app.services.fighter_service import load_fighter_data
