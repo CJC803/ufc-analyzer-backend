@@ -8,18 +8,12 @@ logger = logging.getLogger(__name__)
 
 UFC_EVENTS_URL = "http://ufcstats.com/statistics/events/upcoming"
 
-
 def scrape_upcoming_ufc_event():
     """
     Scrapes UFCStats for the next upcoming event.
-    Returns:
-        {
-          "event_name": str,
-          "event_date": str (ISO),
-          "location": str or None,
-          "fight_card": [ { fighter_a, fighter_b } ]
-        }
-    or None
+
+    ALWAYS returns a dict with event_name, date, location, and fight_card,
+    even if the event URL is missing (UFCStats sometimes hides it until later).
     """
     try:
         resp = requests.get(UFC_EVENTS_URL, timeout=10)
@@ -30,14 +24,11 @@ def scrape_upcoming_ufc_event():
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # UFC Stats upcoming page uses this table for events
     rows = soup.select("table.b-statistics__table-events tbody tr")
 
     if not rows:
-        logger.warning("No upcoming event rows found in UFC Stats.")
+        logger.warning("No upcoming UFC event rows found in UFC Stats.")
         return None
-
-    next_event = None
 
     for row in rows:
         cols = row.find_all("td")
@@ -45,35 +36,47 @@ def scrape_upcoming_ufc_event():
             continue
 
         event_name = cols[0].get_text(strip=True)
-        event_href = cols[0].find("a")["href"] if cols[0].find("a") else None
+        link_tag = cols[0].find("a")
+        event_href = link_tag["href"] if link_tag and link_tag.has_attr("href") else None
 
         date_text = cols[1].get_text(strip=True)
-        location = cols[2].get_text(strip=True)
+        location = cols[2].get_text(strip=True) or None
 
-        # Parse date safely
+        # Robust date parsing
         try:
             date_obj = datetime.strptime(date_text, "%B %d, %Y")
-            event_date_iso = date_obj.isoformat()
-        except:
+            event_date_iso = date_obj.date().isoformat()
+        except Exception:
+            logger.warning(f"Could not parse date: {date_text}")
             event_date_iso = None
 
-        next_event = {
+        event_data = {
             "event_name": event_name,
             "event_date": event_date_iso,
-            "location": location or None,
+            "location": location,
             "event_url": event_href,
         }
-        break  # first row == closest event
 
-    if not next_event or not next_event.get("event_url"):
-        logger.warning("Event found but no event URL available.")
-        return None
+        # ------------------------------
+        # CASE A: No URL (today/tomorrow)
+        # ------------------------------
+        if not event_href:
+            logger.warning(
+                f"No event URL available for upcoming event '{event_name}'. "
+                f"Returning partial event without fight card."
+            )
+            event_data["fight_card"] = []
+            return event_data
 
-    # Pull full card
-    card = scrape_fight_card(next_event["event_url"])
+        # ------------------------------
+        # CASE B: Full scrape possible
+        # ------------------------------
+        fight_card = scrape_fight_card(event_href)
+        event_data["fight_card"] = fight_card
+        return event_data
 
-    next_event["fight_card"] = card
-    return next_event
+    return None
+
 
 
 
