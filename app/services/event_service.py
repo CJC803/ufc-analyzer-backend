@@ -133,3 +133,44 @@ def load_next_event(db: Session) -> Optional[Dict[str, Any]]:
         "location": saved.location,
         "fight_card": saved.fight_card_json or [],
     }
+    import re
+import requests
+from bs4 import BeautifulSoup
+
+UFC_EVENT_DETAILS_BASE = "http://ufcstats.com/event-details/"
+
+def extract_event_id(event_name: str, soup: BeautifulSoup):
+    """
+    Scrapes the event row to grab the DOM link which contains the event ID.
+    Example href:
+    http://ufcstats.com/event-details/9b158a41ff75984a
+    """
+    link = soup.find("a", string=re.compile(event_name, re.I))
+    if not link:
+        return None
+    href = link.get("href", "")
+    return href.split("/")[-1] if "event-details" in href else None
+
+
+def scrape_fight_card(event_id: str):
+    """
+    Scrape fighters from the event details page.
+    Returns:
+        [ { "fighter_a": "", "fighter_b": "" }, ... ]
+    """
+    url = UFC_EVENT_DETAILS_BASE + event_id
+    resp = requests.get(url, timeout=10)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    fight_rows = soup.select("tbody tr.b-fight-details__table-row")
+    fights = []
+
+    for row in fight_rows:
+        fighters = row.select("a.b-link.b-link_style_black")
+        if len(fighters) >= 2:
+            a = fighters[0].get_text(strip=True)
+            b = fighters[1].get_text(strip=True)
+            fights.append({"fighter_a": a, "fighter_b": b})
+
+    return fights
+
