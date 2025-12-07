@@ -7,6 +7,26 @@ import json
 
 logger = logging.getLogger(__name__)
 
+import re
+import json
+
+def extract_json(text: str) -> str:
+    """
+    Pulls the FIRST valid JSON object from any text.
+    Handles markdown ```json fences, stray characters, etc.
+    """
+
+    # 1. Extract JSON inside ```json ... ```
+    fenced = re.search(r"```json(.*?)```", text, re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+
+    # 2. Extract ANY {...} JSON block by matching braces
+    brace = re.search(r"\{.*\}", text, re.DOTALL)
+    if brace:
+        return brace.group(0).strip()
+
+    return text.strip()
 
 # ------------------------------------------------------
 # Get event by name
