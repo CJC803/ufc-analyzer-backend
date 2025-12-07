@@ -26,3 +26,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+from app.models import *
+
+# Create tables automatically on startup
+Base.metadata.create_all(bind=engine)
