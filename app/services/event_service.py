@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 # -----------------------------------
 # Odds API configuration
 # -----------------------------------
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+THE_ODDS_API_KEY = os.getenv("THE_ODDS_API_KEY")
 EVENTS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/events"
 
-if not ODDS_API_KEY:
+if not THE_ODDS_API_KEY:
     logger.error("ODDS_API_KEY is missing! Set it in Railway environment variables.")
     
 # ------------------------------------------------------
@@ -62,7 +62,7 @@ def _fetch_next_event_from_odds_api() -> Optional[Dict[str, Any]]:
     """
 
     params = {
-        "apiKey": ODDS_API_KEY,
+        "apiKey": THE_ODDS_API_KEY,
     }
 
     try:
