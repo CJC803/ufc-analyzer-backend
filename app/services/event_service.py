@@ -44,52 +44,62 @@ def get_event_by_name(db: Session, name: str) -> Optional[Event]:
 # ------------------------------------------------------
 # GPT — Fetch Next UFC Event
 # ------------------------------------------------------
+import requests
 from datetime import datetime
+from app.config import settings
 
-def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+ODDS_API_KEY = settings.THE_ODDS_API_KEY   # or ODDS_API_KEY if renamed
+EVENTS_ENDPOINT = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/events"
 
-    prompt = f"""
-    TODAY'S DATE: {today}
 
-    Your task:
-    - Return the **next upcoming UFC event AFTER today's date**
-    - If you are unsure, pick the best-known *future scheduled* UFC card.
-    - Never return any UFC event that occurs BEFORE {today}.
-
-    Respond in PURE JSON ONLY:
-
-    {{
-      "event_name": "",
-      "event_date": "",   // must be > {today}
-      "location": "",
-      "fight_card": [
-        {{"fighter_a": "", "fighter_b": ""}}
-      ]
-    }}
+def _fetch_next_event_from_odds_api() -> Optional[Dict[str, Any]]:
+    """
+    Uses The Odds API to fetch REAL upcoming MMA events.
+    Returns the NEXT event in your standardized structure.
     """
 
-    raw = gpt_safe_call([prompt])
-    clean = extract_json(raw)
-
-    print("======== RAW GPT EVENT RESPONSE ========")
-    print(clean)
-    print("========================================")
+    params = {
+        "apiKey": ODDS_API_KEY,
+    }
 
     try:
-        data = json.loads(clean)
-
-        # Auto-reject past events (safety check)
-        event_date = data.get("event_date", "")
-        if event_date <= today:
-            logger.error(f"GPT returned past event: {event_date}")
-            return None
-
-        return data
-
+        resp = requests.get(EVENTS_ENDPOINT, params=params, timeout=10)
+        resp.raise_for_status()
     except Exception as e:
-        logger.error(f"Could not parse GPT event response: {e}")
+        logger.error(f"Odds API event request failed: {e}")
         return None
+
+    events = resp.json()
+    if not events:
+        logger.warning("No MMA events returned from Odds API.")
+        return None
+
+    # Sort by start time
+    def parse_time(ev):
+        try:
+            return datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
+        except:
+            return datetime.max
+
+    events_sorted = sorted(events, key=parse_time)
+    next_event = events_sorted[0]
+
+    # Extract fight card from the event
+    fight_card = []
+    for matchup in next_event.get("competitors", []):
+        # Some APIs return 2 names as an array; others return objects —
+        # Normalize it
+        a = matchup.get("home_team") or matchup.get("competitors", [None, None])[0]
+        b = matchup.get("away_team") or matchup.get("competitors", [None, None])[1]
+        if a and b:
+            fight_card.append({"fighter_a": a, "fighter_b": b})
+
+    return {
+        "event_name": next_event.get("sport_title", "UFC Event"),
+        "event_date": next_event.get("commence_time"),
+        "location": next_event.get("venue", None),
+        "fight_card": fight_card,
+    }
 
 
 # ------------------------------------------------------
