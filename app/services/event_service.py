@@ -44,25 +44,32 @@ def get_event_by_name(db: Session, name: str) -> Optional[Event]:
 # ------------------------------------------------------
 # GPT — Fetch Next UFC Event
 # ------------------------------------------------------
+from datetime import datetime
+
 def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
-    prompt = """
-    Return the *next upcoming UFC event* in **pure JSON only**.
+    today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    Format EXACTLY:
+    prompt = f"""
+    TODAY'S DATE: {today}
 
-    {
+    Your task:
+    - Return the **next upcoming UFC event AFTER today's date**
+    - If you are unsure, pick the best-known *future scheduled* UFC card.
+    - Never return any UFC event that occurs BEFORE {today}.
+
+    Respond in PURE JSON ONLY:
+
+    {{
       "event_name": "",
-      "event_date": "",
+      "event_date": "",   // must be > {today}
       "location": "",
       "fight_card": [
-        {"fighter_a": "", "fighter_b": ""}
+        {{"fighter_a": "", "fighter_b": ""}}
       ]
-    }
+    }}
     """
 
-    # IMPORTANT: gpt_safe_call expects a LIST OF STRINGS
     raw = gpt_safe_call([prompt])
-
     clean = extract_json(raw)
 
     print("======== RAW GPT EVENT RESPONSE ========")
@@ -70,7 +77,16 @@ def _gpt_fetch_next_event() -> Optional[Dict[str, Any]]:
     print("========================================")
 
     try:
-        return json.loads(clean)
+        data = json.loads(clean)
+
+        # Auto-reject past events (safety check)
+        event_date = data.get("event_date", "")
+        if event_date <= today:
+            logger.error(f"GPT returned past event: {event_date}")
+            return None
+
+        return data
+
     except Exception as e:
         logger.error(f"Could not parse GPT event response: {e}")
         return None
