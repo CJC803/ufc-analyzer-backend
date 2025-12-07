@@ -1,3 +1,23 @@
+import re
+import json
+
+def extract_json(text: str) -> str:
+    """
+    Pulls the FIRST valid JSON object out of text.
+    Handles markdown ```json fences and garbage.
+    """
+    # 1. Try fenced ```json blocks
+    fenced = re.search(r"```json(.*?)```", text, re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+
+    # 2. Try any {...} JSON object
+    brace = re.search(r"\{.*\}", text, re.DOTALL)
+    if brace:
+        return brace.group(0).strip()
+
+    # 3. Last resort: return raw text
+    return text.strip()
 import logging
 import json
 from typing import Dict, Any, List, Optional
@@ -7,7 +27,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Fighter, Event, Prediction
 from app.utils.gpt_safe import gpt_safe_call
-from app.services.event_service import extract_json
 from app.config import settings
 
 logger = logging.getLogger(__name__)
