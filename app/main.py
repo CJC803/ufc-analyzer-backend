@@ -4,19 +4,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime
 
-from app.routes.event_routes import router as events_router
+# MUST COME AFTER app IS CREATED
 from app.database import get_db
-from app.services.event_service import load_next_event, get_event_by_name
+
+# IMPORT ROUTERS & SERVICES AFTER app CREATION
+from app.routes.event_routes import router as event_router
 from app.services.fighter_service import load_fighter_data
 from app.services.analysis_service import compute_stats_features, build_analysis_prompt
-from app.services.odds_service import get_odds_for_matchups  # MAKE SURE THIS FILE NAME MATCHES YOUR IMPLEMENTATION
+from app.services.odds_service import get_odds_for_matchups
 from app.utils.tapology_batch import get_tapology_batch
 from app.utils.openai_client import run, run_stream
-from app.routes.event_routes import router as event_router
 
-app.include_router(event_router)
+# --------------------------------------------------------------
+# APP MUST BE CREATED BEFORE YOU INCLUDE ROUTERS
+# --------------------------------------------------------------
 
 app = FastAPI(title="UFC Analyzer Backend", version="2.0")
+
+# --------------------------------------------------------------
+# CORS
+# --------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --------------------------------------------------------------
+# INCLUDE ROUTERS
+# --------------------------------------------------------------
+app.include_router(event_router)
+
+# --------------------------------------------------------------
+# ROOT ENDPOINT
+# --------------------------------------------------------------
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "UFC Analyzer Backend Running"}
+
+# (rest of your endpoints… unchanged)
 
 
 # --------------------------------------------------------------
